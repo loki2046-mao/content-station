@@ -10,10 +10,9 @@ const PASSWORD = process.env.SITE_PASSWORD || "2046";
 const COOKIE_NAME = "auth_token";
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 7; // 7天
 
-/** 生成简单 token：password + secret 的 hash 字符串 */
+/** token 就是密码本身，Edge Runtime 兼容 */
 function makeToken(password: string): string {
-  // 用 btoa 做简单混淆，生产级建议换成 HMAC
-  return btoa(`${password}:${process.env.AUTH_SECRET || "station2046"}`);
+  return `station:${password}`;
 }
 
 function isValidToken(token: string): boolean {

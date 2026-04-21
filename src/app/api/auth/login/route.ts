@@ -11,7 +11,7 @@ const COOKIE_NAME = "auth_token";
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 7; // 7天
 
 function makeToken(password: string): string {
-  return btoa(`${password}:${process.env.AUTH_SECRET || "station2046"}`);
+  return `station:${password}`;
 }
 
 export async function POST(request: NextRequest) {
