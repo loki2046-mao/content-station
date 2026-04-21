@@ -127,6 +127,105 @@ export async function initDb() {
         key TEXT PRIMARY KEY,
         value TEXT DEFAULT '{}'
       );
+
+      CREATE TABLE IF NOT EXISTS eval_projects (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        goal_type TEXT DEFAULT '',
+        model_type TEXT NOT NULL DEFAULT 'text',
+        status TEXT NOT NULL DEFAULT 'draft',
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS eval_dimensions (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        model_type TEXT NOT NULL DEFAULT 'text',
+        is_template INTEGER NOT NULL DEFAULT 0,
+        template_name TEXT DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS eval_project_dimensions (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        dimension_id TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS eval_cases (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        dimension_id TEXT DEFAULT '',
+        title TEXT NOT NULL,
+        description TEXT DEFAULT '',
+        difficulty TEXT NOT NULL DEFAULT 'medium',
+        status TEXT NOT NULL DEFAULT 'draft',
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS eval_prompts (
+        id TEXT PRIMARY KEY,
+        case_id TEXT NOT NULL,
+        model_target TEXT DEFAULT '',
+        content TEXT NOT NULL,
+        difficulty TEXT DEFAULT 'medium',
+        is_saved INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS eval_test_results (
+        id TEXT PRIMARY KEY,
+        prompt_id TEXT DEFAULT '',
+        case_id TEXT NOT NULL,
+        model_used TEXT DEFAULT '',
+        tested_at TEXT NOT NULL DEFAULT (datetime('now')),
+        output_url TEXT DEFAULT '',
+        rating TEXT DEFAULT 'success',
+        highlights TEXT DEFAULT '',
+        issues TEXT DEFAULT '',
+        worth_writing INTEGER NOT NULL DEFAULT 0,
+        extractable_insight TEXT DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS eval_insights (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        source_result_id TEXT DEFAULT '',
+        content TEXT NOT NULL,
+        tags TEXT DEFAULT '[]',
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS content_materials (
+        id TEXT PRIMARY KEY,
+        source_type TEXT NOT NULL DEFAULT 'manual',
+        source_id TEXT DEFAULT '',
+        test_subject TEXT DEFAULT '',
+        eval_goal TEXT DEFAULT '',
+        eval_dimension TEXT DEFAULT '',
+        task_description TEXT DEFAULT '',
+        result_summary TEXT DEFAULT '',
+        highlights TEXT DEFAULT '',
+        issues TEXT DEFAULT '',
+        extractable_insight TEXT DEFAULT '',
+        title_directions TEXT DEFAULT '',
+        article_angles TEXT DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS eval_model_configs (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        model_type TEXT NOT NULL DEFAULT 'text',
+        provider TEXT DEFAULT '',
+        api_key TEXT DEFAULT '',
+        base_url TEXT DEFAULT '',
+        model_name TEXT DEFAULT '',
+        extra_config TEXT DEFAULT '{}',
+        is_active INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
     `);
 
     // 插入默认标签（如果不存在）
@@ -165,6 +264,48 @@ export async function initDb() {
         sql: "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
         args: [s.key, s.value],
       });
+    }
+
+    // 插入预设维度（如果维度表为空）
+    const dimCountResult = await client.execute("SELECT COUNT(*) as cnt FROM eval_dimensions");
+    const dimCount = Number((dimCountResult.rows[0] as Record<string, unknown>)?.cnt ?? 0);
+    if (dimCount === 0) {
+      const presetDimensions = [
+        // 图片模型
+        { id: "dim-img-text", name: "中文文字能力", model_type: "image", template_name: "图片模型基础维度" },
+        { id: "dim-img-layout", name: "排版设计能力", model_type: "image", template_name: "图片模型基础维度" },
+        { id: "dim-img-follow", name: "指令遵循", model_type: "image", template_name: "图片模型基础维度" },
+        { id: "dim-img-char", name: "角色一致性", model_type: "image", template_name: "图片模型基础维度" },
+        { id: "dim-img-style", name: "风格控制", model_type: "image", template_name: "图片模型基础维度" },
+        { id: "dim-img-detail", name: "细节稳定性", model_type: "image", template_name: "图片模型基础维度" },
+        // 视频模型
+        { id: "dim-vid-lens", name: "镜头语言", model_type: "video", template_name: "视频模型基础维度" },
+        { id: "dim-vid-motion", name: "动作连续性", model_type: "video", template_name: "视频模型基础维度" },
+        { id: "dim-vid-physics", name: "物理合理性", model_type: "video", template_name: "视频模型基础维度" },
+        { id: "dim-vid-subject", name: "主体一致性", model_type: "video", template_name: "视频模型基础维度" },
+        { id: "dim-vid-camera", name: "运镜执行", model_type: "video", template_name: "视频模型基础维度" },
+        { id: "dim-vid-rhythm", name: "节奏控制", model_type: "video", template_name: "视频模型基础维度" },
+        // 文本模型
+        { id: "dim-txt-understanding", name: "指令理解", model_type: "text", template_name: "文本模型基础维度" },
+        { id: "dim-txt-longform", name: "长文生成", model_type: "text", template_name: "文本模型基础维度" },
+        { id: "dim-txt-reasoning", name: "推理能力", model_type: "text", template_name: "文本模型基础维度" },
+        { id: "dim-txt-chinese", name: "中文表达", model_type: "text", template_name: "文本模型基础维度" },
+        { id: "dim-txt-format", name: "格式遵循", model_type: "text", template_name: "文本模型基础维度" },
+        { id: "dim-txt-creative", name: "创意能力", model_type: "text", template_name: "文本模型基础维度" },
+        // Agent 维度
+        { id: "dim-agent-decompose", name: "任务拆解", model_type: "agent", template_name: "Agent基础维度" },
+        { id: "dim-agent-tool", name: "工具调用", model_type: "agent", template_name: "Agent基础维度" },
+        { id: "dim-agent-context", name: "上下文保持", model_type: "agent", template_name: "Agent基础维度" },
+        { id: "dim-agent-output", name: "输出完整度", model_type: "agent", template_name: "Agent基础维度" },
+        { id: "dim-agent-selfcorrect", name: "自主纠错", model_type: "agent", template_name: "Agent基础维度" },
+        { id: "dim-agent-deliverable", name: "结果可交付性", model_type: "agent", template_name: "Agent基础维度" },
+      ];
+      for (const dim of presetDimensions) {
+        await client.execute({
+          sql: "INSERT OR IGNORE INTO eval_dimensions (id, name, model_type, is_template, template_name) VALUES (?, ?, ?, 1, ?)",
+          args: [dim.id, dim.name, dim.model_type, dim.template_name],
+        });
+      }
     }
 
     console.log("[DB] 数据库初始化完成");

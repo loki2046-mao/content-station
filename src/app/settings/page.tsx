@@ -57,16 +57,17 @@ const PROVIDER_GROUPS = [
   {
     label: "💻 Coding 专用",
     options: [
-      { value: "cursor", label: "Cursor API (兼容OpenAI)" },
-      { value: "github_copilot", label: "GitHub Copilot (兼容OpenAI)" },
-      { value: "codegeex", label: "智谱 CodeGeeX" },
-      { value: "tongyi_coding", label: "阿里 通义灵码" },
+      { value: "alibaba_coding", label: "阿里百炼（通义灵码）" },
+      { value: "volcengine_coding", label: "火山引擎（豆包 Coding）" },
+      { value: "zhipu_coding", label: "智谱 GLM（含 CodeGeeX）" },
+      { value: "kimi_coding", label: "Kimi Coding Plan" },
+      { value: "github_copilot", label: "GitHub Copilot" },
     ],
   },
   {
     label: "⚙️ 其他",
     options: [
-      { value: "ollama", label: "Ollama (本地模型)" },
+      { value: "ollama", label: "Ollama (本地模型，API Key 填任意字符串)" },
       { value: "custom", label: "自定义 (OpenAI兼容)" },
     ],
   },
@@ -91,10 +92,11 @@ const BASE_URL_PRESETS: Record<string, string> = {
   stepfun: "https://api.stepfun.com/v1",
   lingyiwanwu: "https://api.lingyiwanwu.com/v1",
   baichuan: "https://api.baichuan-ai.com/v1",
-  cursor: "https://api2.cursor.sh/v1",
+  alibaba_coding: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+  volcengine_coding: "https://ark.cn-beijing.volces.com/api/v3",
+  zhipu_coding: "https://open.bigmodel.cn/api/paas/v4",
+  kimi_coding: "https://api.moonshot.cn/v1",
   github_copilot: "https://api.githubcopilot.com",
-  codegeex: "https://open.bigmodel.cn/api/paas/v4",
-  tongyi_coding: "https://dashscope.aliyuncs.com/compatible-mode/v1",
   ollama: "http://localhost:11434/v1",
   custom: "",
 };
@@ -115,10 +117,11 @@ const DEFAULT_MODEL_PRESETS: Record<string, string> = {
   stepfun: "step-2-16k",
   lingyiwanwu: "yi-lightning",
   baichuan: "Baichuan4",
-  cursor: "claude-3-5-sonnet-20241022",
+  alibaba_coding: "qwen-coder-plus",
+  volcengine_coding: "doubao-coder-plus-32k",
+  zhipu_coding: "glm-4-flash",
+  kimi_coding: "moonshot-v1-8k",
   github_copilot: "gpt-4o",
-  codegeex: "codegeex-4",
-  tongyi_coding: "qwen-coder-plus",
   ollama: "qwen2.5:7b",
   custom: "",
 };
@@ -333,7 +336,7 @@ export default function SettingsPage() {
               className="mt-1"
             />
             <p className="text-xs text-muted-foreground mt-1">
-              国内 API 请填对应的代理地址
+              国内 API 请填对应的代理地址。Ollama 本地模型默认 http://localhost:11434/v1，API Key 填任意字符串即可（本地模型不验证）。
             </p>
           </div>
 

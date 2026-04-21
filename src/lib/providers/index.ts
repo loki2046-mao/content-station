@@ -66,10 +66,11 @@ export function createProvider(config: ProviderConfig): ModelProvider {
     case "lingyiwanwu":
     case "baichuan":
     // Coding 专用
-    case "cursor":
+    case "alibaba_coding":
+    case "volcengine_coding":
+    case "zhipu_coding":
+    case "kimi_coding":
     case "github_copilot":
-    case "codegeex":
-    case "tongyi_coding":
     // 本地 / 自定义
     case "ollama":
     case "custom":
