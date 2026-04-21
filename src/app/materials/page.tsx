@@ -1,0 +1,258 @@
+/**
+ * 素材库页面
+ * 管理所有素材：观点、金句、标题灵感、例子、开头句、结尾句
+ */
+"use client";
+
+import { useState, useCallback } from "react";
+import { useApiGet, apiFetch } from "@/hooks/use-api";
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { PageHeader } from "@/components/page-header";
+import { MaterialTypeBadge } from "@/components/status-badge";
+import { SkeletonCard, EmptyState } from "@/components/loading";
+import { toast } from "sonner";
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnyRecord = Record<string, any>;
+
+const TYPE_OPTIONS = [
+  { value: "all", label: "全部类型" },
+  { value: "opinion", label: "观点" },
+  { value: "quote", label: "金句" },
+  { value: "title_inspiration", label: "标题灵感" },
+  { value: "example", label: "例子" },
+  { value: "opening", label: "开头句" },
+  { value: "closing", label: "结尾句" },
+];
+
+const CREATE_TYPE_OPTIONS = TYPE_OPTIONS.filter((t) => t.value !== "all");
+
+export default function MaterialsPage() {
+  const [search, setSearch] = useState("");
+  const [typeFilter, setTypeFilter] = useState("all");
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editContent, setEditContent] = useState("");
+  const [editType, setEditType] = useState("opinion");
+
+  // 构建查询
+  const params = new URLSearchParams();
+  if (search) params.set("q", search);
+  if (typeFilter && typeFilter !== "all") params.set("type", typeFilter);
+  const queryStr = params.toString();
+
+  const { data: materialsList, loading, refresh } = useApiGet<AnyRecord[]>(
+    `/api/materials${queryStr ? `?${queryStr}` : ""}`
+  );
+
+  // 新建素材
+  const handleCreate = useCallback(
+    async (formData: FormData) => {
+      const content = formData.get("content") as string;
+      const type = formData.get("type") as string;
+
+      if (!content.trim()) {
+        toast.error("素材内容不能为空");
+        return;
+      }
+
+      try {
+        await apiFetch("/api/materials", {
+          method: "POST",
+          body: JSON.stringify({ content, type }),
+        });
+        toast.success("素材创建成功");
+        setDialogOpen(false);
+        refresh();
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "创建失败");
+      }
+    },
+    [refresh]
+  );
+
+  // 删除素材
+  const handleDelete = async (id: string) => {
+    if (!confirm("确定要删除这条素材吗？")) return;
+    try {
+      await apiFetch(`/api/materials/${id}`, { method: "DELETE" });
+      toast.success("素材已删除");
+      refresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "删除失败");
+    }
+  };
+
+  // 开始编辑
+  const startEdit = (material: AnyRecord) => {
+    setEditingId(material.id);
+    setEditContent(material.content);
+    setEditType(material.type);
+  };
+
+  // 保存编辑
+  const saveEdit = async () => {
+    if (!editingId) return;
+    try {
+      await apiFetch(`/api/materials/${editingId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ content: editContent, type: editType }),
+      });
+      toast.success("素材已更新");
+      setEditingId(null);
+      refresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "更新失败");
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title="素材库"
+        description="收集和管理写作素材：观点、金句、例子、灵感"
+        actions={
+          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+            <DialogTrigger render={<Button className="bg-primary hover:bg-primary/90" />}>
+              + 新建素材
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>新建素材</DialogTitle>
+              </DialogHeader>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  handleCreate(new FormData(e.currentTarget));
+                }}
+                className="space-y-4"
+              >
+                <div>
+                  <Label htmlFor="type">素材类型 *</Label>
+                  <Select name="type" defaultValue="opinion">
+                    <SelectTrigger className="mt-1">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {CREATE_TYPE_OPTIONS.map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label htmlFor="content">素材内容 *</Label>
+                  <Textarea id="content" name="content" placeholder="写下你的素材" className="mt-1" rows={5} />
+                </div>
+                <Button type="submit" className="w-full bg-primary hover:bg-primary/90">创建</Button>
+              </form>
+            </DialogContent>
+          </Dialog>
+        }
+      />
+
+      {/* 筛选栏 */}
+      <div className="flex flex-col sm:flex-row gap-3">
+        <Input
+          placeholder="搜索素材..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="sm:max-w-xs"
+        />
+        <Select value={typeFilter} onValueChange={(v) => setTypeFilter(v || "all")}>
+          <SelectTrigger className="sm:w-40">
+            <SelectValue placeholder="类型筛选" />
+          </SelectTrigger>
+          <SelectContent>
+            {TYPE_OPTIONS.map((opt) => (
+              <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      {/* 素材列表 */}
+      {loading ? (
+        <div className="grid gap-3">
+          {[1, 2, 3, 4].map((i) => (
+            <SkeletonCard key={i} />
+          ))}
+        </div>
+      ) : !materialsList?.length ? (
+        <EmptyState
+          icon="📝"
+          title="还没有素材"
+          description="点击右上角开始收集你的第一条素材"
+        />
+      ) : (
+        <div className="grid gap-3">
+          {materialsList.map((material) => (
+            <Card key={material.id} className="hover:border-primary/20 transition-colors">
+              <CardContent className="pt-4 pb-4">
+                {editingId === material.id ? (
+                  // 编辑模式
+                  <div className="space-y-3">
+                    <Select value={editType} onValueChange={(v) => setEditType(v || "opinion")}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {CREATE_TYPE_OPTIONS.map((opt) => (
+                          <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Textarea
+                      value={editContent}
+                      onChange={(e) => setEditContent(e.target.value)}
+                      rows={4}
+                    />
+                    <div className="flex gap-2">
+                      <Button size="sm" onClick={saveEdit} className="bg-primary hover:bg-primary/90">保存</Button>
+                      <Button size="sm" variant="outline" onClick={() => setEditingId(null)}>取消</Button>
+                    </div>
+                  </div>
+                ) : (
+                  // 展示模式
+                  <div className="flex items-start gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-2">
+                        <MaterialTypeBadge type={material.type} />
+                        <span className="text-xs text-muted-foreground">
+                          {new Date(material.createdAt || material.created_at).toLocaleDateString("zh-CN")}
+                        </span>
+                      </div>
+                      <p className="text-sm whitespace-pre-wrap">{material.content}</p>
+                    </div>
+                    <div className="flex gap-1 shrink-0">
+                      <Button variant="ghost" size="sm" onClick={() => startEdit(material)}>✏️</Button>
+                      <Button variant="ghost" size="sm" onClick={() => handleDelete(material.id)}>🗑️</Button>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
