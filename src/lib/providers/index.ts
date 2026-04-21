@@ -45,6 +45,7 @@ export async function getModelConfig(): Promise<ProviderConfig | null> {
 
 /**
  * 根据配置创建 Provider 实例
+ * 国内大模型全部走 OpenAI 兼容接口（base_url 已预设）
  */
 export function createProvider(config: ProviderConfig): ModelProvider {
   switch (config.provider) {
@@ -52,9 +53,27 @@ export function createProvider(config: ProviderConfig): ModelProvider {
       return new AnthropicProvider(config);
     case "openai":
     case "gemini":
+    // 国内大模型（OpenAI 兼容接口）
+    case "deepseek":
+    case "qwen":
+    case "doubao":
+    case "zhipu":
+    case "moonshot":
+    case "baidu":
+    case "minimax":
+    case "hunyuan":
+    case "stepfun":
+    case "lingyiwanwu":
+    case "baichuan":
+    // Coding 专用
+    case "cursor":
+    case "github_copilot":
+    case "codegeex":
+    case "tongyi_coding":
+    // 本地 / 自定义
+    case "ollama":
     case "custom":
     default:
-      // Gemini 和自定义 provider 都走 OpenAI 兼容接口
       return new OpenAIProvider(config);
   }
 }

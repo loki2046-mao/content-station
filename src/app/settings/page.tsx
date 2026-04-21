@@ -15,7 +15,9 @@ import { Separator } from "@/components/ui/separator";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -26,17 +28,98 @@ import { toast } from "sonner";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyRecord = Record<string, any>;
 
-const PROVIDER_OPTIONS = [
-  { value: "openai", label: "OpenAI / 兼容 API" },
-  { value: "anthropic", label: "Anthropic Claude" },
-  { value: "gemini", label: "Google Gemini (OpenAI兼容)" },
-  { value: "custom", label: "自定义 (OpenAI兼容)" },
+// 模型服务商分组
+const PROVIDER_GROUPS = [
+  {
+    label: "🌍 国际",
+    options: [
+      { value: "openai", label: "OpenAI (GPT系列)" },
+      { value: "anthropic", label: "Anthropic (Claude系列)" },
+      { value: "gemini", label: "Google Gemini" },
+    ],
+  },
+  {
+    label: "🇨🇳 国内大模型",
+    options: [
+      { value: "deepseek", label: "DeepSeek" },
+      { value: "qwen", label: "阿里 通义千问 (Qwen)" },
+      { value: "doubao", label: "字节 豆包 (Doubao)" },
+      { value: "zhipu", label: "智谱 GLM (ZhipuAI)" },
+      { value: "moonshot", label: "月之暗面 (Kimi)" },
+      { value: "baidu", label: "百度 文心 (ERNIE)" },
+      { value: "minimax", label: "MiniMax" },
+      { value: "hunyuan", label: "腾讯 混元 (Hunyuan)" },
+      { value: "stepfun", label: "阶跃星辰 (Step)" },
+      { value: "lingyiwanwu", label: "零一万物 (Yi)" },
+      { value: "baichuan", label: "百川智能" },
+    ],
+  },
+  {
+    label: "💻 Coding 专用",
+    options: [
+      { value: "cursor", label: "Cursor API (兼容OpenAI)" },
+      { value: "github_copilot", label: "GitHub Copilot (兼容OpenAI)" },
+      { value: "codegeex", label: "智谱 CodeGeeX" },
+      { value: "tongyi_coding", label: "阿里 通义灵码" },
+    ],
+  },
+  {
+    label: "⚙️ 其他",
+    options: [
+      { value: "ollama", label: "Ollama (本地模型)" },
+      { value: "custom", label: "自定义 (OpenAI兼容)" },
+    ],
+  },
 ];
 
+// 扁平化列表（用于 Select）
+const PROVIDER_OPTIONS = PROVIDER_GROUPS.flatMap((g) => g.options);
+
+// Base URL 预设
 const BASE_URL_PRESETS: Record<string, string> = {
   openai: "https://api.openai.com/v1",
   anthropic: "https://api.anthropic.com",
   gemini: "https://generativelanguage.googleapis.com/v1beta/openai",
+  deepseek: "https://api.deepseek.com/v1",
+  qwen: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+  doubao: "https://ark.cn-beijing.volces.com/api/v3",
+  zhipu: "https://open.bigmodel.cn/api/paas/v4",
+  moonshot: "https://api.moonshot.cn/v1",
+  baidu: "https://aip.baidubce.com/rpc/2.0/ai_custom/v1/wenxinworkshop/chat",
+  minimax: "https://api.minimax.chat/v1",
+  hunyuan: "https://api.hunyuan.cloud.tencent.com/v1",
+  stepfun: "https://api.stepfun.com/v1",
+  lingyiwanwu: "https://api.lingyiwanwu.com/v1",
+  baichuan: "https://api.baichuan-ai.com/v1",
+  cursor: "https://api2.cursor.sh/v1",
+  github_copilot: "https://api.githubcopilot.com",
+  codegeex: "https://open.bigmodel.cn/api/paas/v4",
+  tongyi_coding: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+  ollama: "http://localhost:11434/v1",
+  custom: "",
+};
+
+// 各 provider 的推荐默认模型
+const DEFAULT_MODEL_PRESETS: Record<string, string> = {
+  openai: "gpt-4o-mini",
+  anthropic: "claude-sonnet-4-20250514",
+  gemini: "gemini-2.0-flash",
+  deepseek: "deepseek-chat",
+  qwen: "qwen-plus",
+  doubao: "doubao-pro-32k",
+  zhipu: "glm-4-flash",
+  moonshot: "moonshot-v1-8k",
+  baidu: "ernie-4.0-8k",
+  minimax: "abab6.5s-chat",
+  hunyuan: "hunyuan-turbo",
+  stepfun: "step-2-16k",
+  lingyiwanwu: "yi-lightning",
+  baichuan: "Baichuan4",
+  cursor: "claude-3-5-sonnet-20241022",
+  github_copilot: "gpt-4o",
+  codegeex: "codegeex-4",
+  tongyi_coding: "qwen-coder-plus",
+  ollama: "qwen2.5:7b",
   custom: "",
 };
 
@@ -67,12 +150,15 @@ export default function SettingsPage() {
     }
   }, [settingsData]);
 
-  // 当切换 provider 时更新 base URL
+  // 当切换 provider 时同时更新 base URL 和默认模型
   const handleProviderChange = (value: string | null) => {
     if (!value) return;
     setProvider(value);
-    if (BASE_URL_PRESETS[value]) {
+    if (BASE_URL_PRESETS[value] !== undefined) {
       setBaseUrl(BASE_URL_PRESETS[value]);
+    }
+    if (DEFAULT_MODEL_PRESETS[value]) {
+      setDefaultModel(DEFAULT_MODEL_PRESETS[value]);
     }
   };
 
@@ -214,9 +300,14 @@ export default function SettingsPage() {
               <SelectTrigger className="mt-1">
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent>
-                {PROVIDER_OPTIONS.map((opt) => (
-                  <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+              <SelectContent className="max-h-80">
+                {PROVIDER_GROUPS.map((group) => (
+                  <SelectGroup key={group.label}>
+                    <SelectLabel>{group.label}</SelectLabel>
+                    {group.options.map((opt) => (
+                      <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                    ))}
+                  </SelectGroup>
                 ))}
               </SelectContent>
             </Select>
