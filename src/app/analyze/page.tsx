@@ -1,11 +1,13 @@
 /**
  * 切口分析页面
  * 输入话题 → 调用 AI → 展示6个切口方向
+ * 使用后台任务模式：发出请求后轮询结果，切走不丢失
  */
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useApiGet, apiFetch } from "@/hooks/use-api";
+import { useBackgroundTask } from "@/hooks/use-background-task";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -34,14 +36,42 @@ const SUITABILITY_COLORS: Record<string, string> = {
 export default function AnalyzePage() {
   const [topicId, setTopicId] = useState("");
   const [inputText, setInputText] = useState("");
-  const [generating, setGenerating] = useState(false);
   const [currentResult, setCurrentResult] = useState<AnyRecord[] | null>(null);
+  const [currentAnalysisId, setCurrentAnalysisId] = useState<string | null>(null);
+  const [savingAngles, setSavingAngles] = useState<Set<number>>(new Set());
 
   const { data: topicsList } = useApiGet<AnyRecord[]>("/api/topics");
   const { data: historyList, refresh: refreshHistory } = useApiGet<AnyRecord[]>("/api/analyses");
   const { data: settingsData } = useApiGet<AnyRecord>("/api/settings");
 
   const modelConfigured = !!settingsData?.settings?.api_key;
+
+  // 检查是否有进行中的任务（组件挂载时恢复轮询）
+  const resumeId = useMemo(() => {
+    if (!historyList) return null;
+    const generating = historyList.find((r) => r.status === "generating");
+    return generating?.id || null;
+  }, [historyList]);
+
+  // 后台任务 hook
+  const { status: taskStatus, trigger, taskId } = useBackgroundTask({
+    generateUrl: "/api/analyze",
+    statusUrl: "/api/analyze/status",
+    resumeId,
+    onDone: (result) => {
+      const parsed = Array.isArray(result) ? result : [];
+      setCurrentResult(parsed);
+      setCurrentAnalysisId(taskId);
+      refreshHistory();
+      toast.success("切口分析完成");
+    },
+    onError: (error) => {
+      refreshHistory();
+      toast.error(error || "分析失败");
+    },
+  });
+
+  const generating = taskStatus === "generating";
 
   // 选择选题时自动填入文本
   const handleTopicSelect = (id: string | null) => {
@@ -55,30 +85,42 @@ export default function AnalyzePage() {
   };
 
   // 生成切口分析
-  const handleGenerate = async () => {
+  const handleGenerate = () => {
     if (!inputText.trim()) {
       toast.error("请输入要分析的话题");
       return;
     }
 
-    setGenerating(true);
     setCurrentResult(null);
+    trigger({
+      topicId: topicId && topicId !== "_direct" ? topicId : null,
+      inputText: inputText.trim(),
+    });
+  };
+
+  // 保存切口到素材库
+  const handleSaveToMaterial = async (angle: AnyRecord, index: number) => {
+    setSavingAngles((prev) => new Set(prev).add(index));
     try {
-      const res = await apiFetch<AnyRecord>("/api/analyze", {
+      const content = `【${angle.name}】${angle.description}\n适合度: ${angle.suitability === "high" ? "高" : angle.suitability === "medium" ? "中等" : "较低"}\n文章类型: ${angle.articleType}${angle.suitabilityReason ? `\n原因: ${angle.suitabilityReason}` : ""}${angle.expandPoints?.length ? `\n展开方向:\n${angle.expandPoints.map((p: string) => `• ${p}`).join("\n")}` : ""}`;
+      await apiFetch("/api/materials", {
         method: "POST",
         body: JSON.stringify({
-          topicId: topicId && topicId !== "_direct" ? topicId : null,
-          inputText: inputText.trim(),
+          content,
+          type: "opinion",
+          tags: ["切口分析", angle.articleType].filter(Boolean),
+          topicIds: topicId && topicId !== "_direct" ? [topicId] : [],
         }),
       });
-      const result = typeof res.result === "string" ? JSON.parse(res.result) : res.result;
-      setCurrentResult(result);
-      refreshHistory();
-      toast.success("切口分析完成");
+      toast.success(`"${angle.name}" 已保存到素材库`);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "分析失败");
+      toast.error(e instanceof Error ? e.message : "保存失败");
     } finally {
-      setGenerating(false);
+      setSavingAngles((prev) => {
+        const next = new Set(prev);
+        next.delete(index);
+        return next;
+      });
     }
   };
 
@@ -159,6 +201,15 @@ export default function AnalyzePage() {
                       ))}
                     </ul>
                   )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-xs mt-2"
+                    disabled={savingAngles.has(i)}
+                    onClick={() => handleSaveToMaterial(angle, i)}
+                  >
+                    {savingAngles.has(i) ? "保存中..." : "💾 保存到素材库"}
+                  </Button>
                 </CardContent>
               </Card>
             ))}
@@ -174,12 +225,40 @@ export default function AnalyzePage() {
         ) : (
           <div className="space-y-3">
             {historyList.map((record) => {
-              const result = typeof record.result === "string" ? JSON.parse(record.result) : record.result;
+              const isGenerating = record.status === "generating";
+              const isError = record.status === "error";
+              const result = isGenerating || isError
+                ? []
+                : (typeof record.result === "string" ? JSON.parse(record.result) : record.result);
+              const isActive = currentAnalysisId === record.id;
               return (
-                <Card key={record.id}>
+                <Card
+                  key={record.id}
+                  className={`cursor-pointer transition-colors ${isActive ? "border-primary/50" : isGenerating ? "border-amber-500/30 opacity-70" : "hover:border-primary/30"}`}
+                  onClick={() => {
+                    if (isGenerating) return;
+                    if (isActive) {
+                      setCurrentResult(null);
+                      setCurrentAnalysisId(null);
+                    } else {
+                      setCurrentResult(Array.isArray(result) ? result : []);
+                      setCurrentAnalysisId(record.id);
+                    }
+                  }}
+                >
                   <CardHeader className="pb-2">
                     <CardTitle className="text-sm font-normal flex items-center gap-2">
                       <span className="truncate flex-1">{record.inputText || record.input_text}</span>
+                      {isGenerating && (
+                        <Badge variant="outline" className="bg-amber-500/20 text-amber-400 border-amber-500/30 shrink-0">
+                          生成中...
+                        </Badge>
+                      )}
+                      {isError && (
+                        <Badge variant="outline" className="bg-red-500/20 text-red-400 border-red-500/30 shrink-0">
+                          失败
+                        </Badge>
+                      )}
                       <span className="text-xs text-muted-foreground shrink-0">
                         {new Date(record.createdAt || record.created_at).toLocaleString("zh-CN")}
                       </span>

@@ -1,6 +1,7 @@
 /**
  * 测试结果详情 API
- * PATCH /api/eval/test-results/[id] — 更新测试结果
+ * PATCH  /api/eval/test-results/[id] — 更新测试结果
+ * DELETE /api/eval/test-results/[id] — 删除测试结果
  */
 import { NextRequest } from "next/server";
 import { getDb } from "@/lib/db";
@@ -47,5 +48,22 @@ export async function PATCH(
     return ok({ id, ...updateData });
   } catch (error) {
     return err(`更新测试结果失败: ${error}`, 500);
+  }
+}
+
+export async function DELETE(
+  _request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  await ensureDbInit();
+  const db = getDb();
+  if (!db) return dbError();
+
+  try {
+    const { id } = await params;
+    await db.delete(evalTestResults).where(eq(evalTestResults.id, id));
+    return ok({ id, deleted: true });
+  } catch (error) {
+    return err(`删除测试结果失败: ${error}`, 500);
   }
 }

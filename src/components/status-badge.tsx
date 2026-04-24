@@ -19,6 +19,10 @@ const MATERIAL_TYPE_MAP: Record<string, { label: string; className: string }> = 
   example: { label: "例子", className: "bg-blue-500/20 text-blue-400 border-blue-500/30" },
   opening: { label: "开头句", className: "bg-green-500/20 text-green-400 border-green-500/30" },
   closing: { label: "结尾句", className: "bg-teal-500/20 text-teal-400 border-teal-500/30" },
+  title: { label: "标题方案", className: "bg-rose-500/20 text-rose-400 border-rose-500/30" },
+  angle: { label: "切口", className: "bg-indigo-500/20 text-indigo-400 border-indigo-500/30" },
+  outline: { label: "骨架", className: "bg-cyan-500/20 text-cyan-400 border-cyan-500/30" },
+  general: { label: "通用", className: "bg-zinc-500/20 text-zinc-400 border-zinc-500/30" },
 };
 
 export function StatusBadge({ status }: { status: string }) {

@@ -226,7 +226,107 @@ export async function initDb() {
         is_active INTEGER NOT NULL DEFAULT 1,
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
+
+      CREATE TABLE IF NOT EXISTS idea_tags (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        color TEXT DEFAULT '#888888',
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS inbox_items (
+        id TEXT PRIMARY KEY,
+        raw_content TEXT NOT NULL,
+        source_type TEXT DEFAULT 'web',
+        quick_type TEXT DEFAULT '',
+        suggested_type TEXT DEFAULT 'raw',
+        suggested_tags TEXT DEFAULT '[]',
+        status TEXT DEFAULT 'inbox',
+        promoted_to_id TEXT DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS content_items (
+        id TEXT PRIMARY KEY,
+        title TEXT DEFAULT '',
+        content TEXT NOT NULL,
+        item_type TEXT NOT NULL,
+        tags TEXT DEFAULT '[]',
+        related_topic TEXT DEFAULT '',
+        related_product TEXT DEFAULT '',
+        source_inbox_id TEXT DEFAULT '',
+        status TEXT DEFAULT 'active',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS topic_projects (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        description TEXT,
+        status TEXT DEFAULT 'in_progress',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS topic_cards (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        zone_type TEXT NOT NULL,
+        title TEXT NOT NULL,
+        content TEXT,
+        card_status TEXT DEFAULT 'active',
+        source_type TEXT DEFAULT 'manual',
+        is_pinned INTEGER DEFAULT 0,
+        sort_order INTEGER DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS topic_summaries (
+        id TEXT PRIMARY KEY,
+        project_id TEXT UNIQUE NOT NULL,
+        recommended_angle TEXT,
+        recommended_platform TEXT,
+        spread_summary TEXT,
+        next_action TEXT,
+        export_status TEXT DEFAULT 'not_exported',
+        last_exported_at INTEGER,
+        updated_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS hotspot_items (
+        id TEXT PRIMARY KEY,
+        source TEXT NOT NULL,
+        title TEXT NOT NULL,
+        url TEXT,
+        heat_score INTEGER DEFAULT 0,
+        summary TEXT,
+        author TEXT,
+        tags TEXT DEFAULT '[]',
+        status TEXT DEFAULT 'new',
+        adopted_topic_id TEXT,
+        fetched_at TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
     `);
+
+    // === 增量迁移：新增字段 ===
+    // materials 表加 source_type / source_id
+    try { await client.execute("ALTER TABLE materials ADD COLUMN source_type TEXT DEFAULT ''"); } catch { /* 已存在则忽略 */ }
+    try { await client.execute("ALTER TABLE materials ADD COLUMN source_id TEXT DEFAULT ''"); } catch { /* 已存在则忽略 */ }
+    // titles 表加 status
+    try { await client.execute("ALTER TABLE titles ADD COLUMN status TEXT DEFAULT 'done'"); } catch { /* 已存在则忽略 */ }
+    // outlines 表加 status
+    try { await client.execute("ALTER TABLE outlines ADD COLUMN status TEXT DEFAULT 'done'"); } catch { /* 已存在则忽略 */ }
+    // analyses 表加 status / error
+    try { await client.execute("ALTER TABLE analyses ADD COLUMN status TEXT DEFAULT 'done'"); } catch { /* 已存在则忽略 */ }
+    try { await client.execute("ALTER TABLE analyses ADD COLUMN error TEXT DEFAULT ''"); } catch { /* 已存在则忽略 */ }
+    // titles 表加 error
+    try { await client.execute("ALTER TABLE titles ADD COLUMN error TEXT DEFAULT ''"); } catch { /* 已存在则忽略 */ }
+    // outlines 表加 error
+    try { await client.execute("ALTER TABLE outlines ADD COLUMN error TEXT DEFAULT ''"); } catch { /* 已存在则忽略 */ }
 
     // 插入默认标签（如果不存在）
     const defaultTags = [

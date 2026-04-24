@@ -16,11 +16,14 @@ import { Separator } from "@/components/ui/separator";
 const NAV_ITEMS = [
   { href: "/", label: "Dashboard", icon: "📊" },
   { href: "/topics", label: "选题池", icon: "📋" },
+  { href: "/hotspots", label: "热点", icon: "🔥" },
+  { href: "/topics-board", label: "推演板", icon: "🧩" },
   { href: "/analyze", label: "切口分析", icon: "🔍" },
   { href: "/titles", label: "标题生成", icon: "✍️" },
   { href: "/outline", label: "骨架生成", icon: "🏗️" },
   { href: "/materials", label: "素材库", icon: "📝" },
   { href: "/eval", label: "测评工作台", icon: "🧪" },
+  { href: "/brain", label: "外脑", icon: "🧠" },
   { href: "/settings", label: "设置", icon: "⚙️" },
 ];
 
@@ -104,6 +107,11 @@ function SidebarContent({ onItemClick }: { onItemClick?: () => void }) {
             isActive={
               item.href === "/"
                 ? pathname === "/"
+                : item.href === "/brain"
+                ? pathname.startsWith("/brain") ||
+                  ["/quick", "/inbox", "/organize", "/library", "/search"].some(
+                    (p) => pathname === p || pathname.startsWith(p + "/")
+                  )
                 : pathname.startsWith(item.href)
             }
             onClick={onItemClick}

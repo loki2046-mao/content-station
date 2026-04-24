@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
     const limit = parseInt(searchParams.get("limit") || "50");
 
     const conditions = [];
-    if (type) conditions.push(eq(materials.type, type as "opinion" | "quote" | "title_inspiration" | "example" | "opening" | "closing"));
+    if (type) conditions.push(eq(materials.type, type as "opinion" | "quote" | "title_inspiration" | "example" | "opening" | "closing" | "title" | "angle" | "outline" | "general"));
     if (q) conditions.push(like(materials.content, `%${q}%`));
 
     let query = db.select().from(materials);
@@ -60,7 +60,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { content, type, tags: materialTags, topicIds } = body;
+    const { content, type, tags: materialTags, topicIds, sourceType, sourceId } = body;
 
     if (!content) return err("素材内容不能为空");
     if (!type) return err("请选择素材类型");
@@ -71,6 +71,8 @@ export async function POST(request: NextRequest) {
       type,
       tags: JSON.stringify(materialTags || []),
       topicIds: JSON.stringify(topicIds || []),
+      sourceType: sourceType || "",
+      sourceId: sourceId || "",
       createdAt: new Date().toISOString(),
     };
 

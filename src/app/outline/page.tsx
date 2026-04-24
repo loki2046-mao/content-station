@@ -1,11 +1,13 @@
 /**
  * 骨架生成页面
  * 选择选题+切口 → 生成结构化文章骨架
+ * 使用后台任务模式：发出请求后轮询结果，切走不丢失
  */
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useApiGet, apiFetch } from "@/hooks/use-api";
+import { useBackgroundTask } from "@/hooks/use-background-task";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,50 +30,101 @@ type AnyRecord = Record<string, any>;
 
 export default function OutlinePage() {
   const [topicId, setTopicId] = useState("");
+  const [selectedAnalysisId, setSelectedAnalysisId] = useState("");
+  const [selectedAngleIndex, setSelectedAngleIndex] = useState("");
   const [angle, setAngle] = useState("");
-  const [generating, setGenerating] = useState(false);
   const [currentResult, setCurrentResult] = useState<AnyRecord | null>(null);
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState("");
+  const [savingKeys, setSavingKeys] = useState<Set<string>>(new Set());
 
   const { data: topicsList } = useApiGet<AnyRecord[]>("/api/topics");
   const { data: historyList, refresh: refreshHistory } = useApiGet<AnyRecord[]>("/api/outlines");
   const { data: settingsData } = useApiGet<AnyRecord>("/api/settings");
+  const { data: topicAnalyses } = useApiGet<AnyRecord[]>(
+    topicId ? `/api/analyses?topicId=${topicId}` : null
+  );
 
   const modelConfigured = !!settingsData?.settings?.api_key;
   const selectedTopic = topicsList?.find((t) => t.id === topicId);
 
+  // 检查是否有进行中的任务
+  const resumeId = useMemo(() => {
+    if (!historyList) return null;
+    const generating = historyList.find((r) => r.status === "generating");
+    return generating?.id || null;
+  }, [historyList]);
+
+  // 后台任务 hook
+  const { status: taskStatus, trigger, taskId } = useBackgroundTask({
+    generateUrl: "/api/outlines/generate",
+    statusUrl: "/api/outlines/status",
+    resumeId,
+    onDone: (result) => {
+      setCurrentResult(result as AnyRecord);
+      setCurrentId(taskId);
+      setEditing(false);
+      refreshHistory();
+      toast.success("骨架生成完成");
+    },
+    onError: (error) => {
+      refreshHistory();
+      toast.error(error || "生成失败");
+    },
+  });
+
+  const generating = taskStatus === "generating";
+
+  // 解析当前选中分析的切口列表
+  const currentAngles: AnyRecord[] = (() => {
+    if (!selectedAnalysisId || !topicAnalyses) return [];
+    const analysis = topicAnalyses.find((a) => a.id === selectedAnalysisId);
+    if (!analysis) return [];
+    try {
+      const result = typeof analysis.result === "string" ? JSON.parse(analysis.result) : analysis.result;
+      return Array.isArray(result) ? result : [];
+    } catch {
+      return [];
+    }
+  })();
+
+  // 选择选题时重置分析相关状态
+  const handleTopicChange = (v: string | null) => {
+    setTopicId(v || "");
+    setSelectedAnalysisId("");
+    setSelectedAngleIndex("");
+    setAngle("");
+  };
+
+  // 选择切口时自动填入角度
+  const handleAngleSelect = (v: string | null) => {
+    setSelectedAngleIndex(v || "");
+    if (v && v !== "_manual") {
+      const idx = parseInt(v);
+      const a = currentAngles[idx];
+      if (a) {
+        setAngle(`${a.name}：${a.description}`);
+      }
+    }
+  };
+
   // 生成骨架
-  const handleGenerate = async () => {
+  const handleGenerate = () => {
     if (!topicId || !selectedTopic) {
       toast.error("请选择一个选题");
       return;
     }
 
-    setGenerating(true);
     setCurrentResult(null);
     setCurrentId(null);
     setEditing(false);
-    try {
-      const res = await apiFetch<AnyRecord>("/api/outlines/generate", {
-        method: "POST",
-        body: JSON.stringify({
-          topicId,
-          topic: selectedTopic.title,
-          angle: angle || undefined,
-        }),
-      });
-      const result = typeof res.result === "string" ? JSON.parse(res.result) : res.result;
-      setCurrentResult(result);
-      setCurrentId(res.id);
-      refreshHistory();
-      toast.success("骨架生成完成");
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "生成失败");
-    } finally {
-      setGenerating(false);
-    }
+    trigger({
+      topicId,
+      topic: selectedTopic.title,
+      angle: angle || undefined,
+      analysisId: selectedAnalysisId || undefined,
+    });
   };
 
   // 进入编辑模式
@@ -98,6 +151,32 @@ export default function OutlinePage() {
     }
   };
 
+  // 保存骨架内容到素材库
+  const handleSaveToMaterials = async (content: string, type: string, key: string) => {
+    if (savingKeys.has(key)) return;
+    setSavingKeys((prev) => new Set(prev).add(key));
+    try {
+      await apiFetch("/api/materials", {
+        method: "POST",
+        body: JSON.stringify({
+          content,
+          type,
+          sourceType: "outline",
+          sourceId: currentId || "",
+        }),
+      });
+      toast.success("已保存到素材库");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "保存失败");
+    } finally {
+      setSavingKeys((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+    }
+  };
+
   return (
     <div className="space-y-6">
       <PageHeader title="骨架生成" description="选择选题和切口，AI 帮你搭建完整的文章结构" />
@@ -107,7 +186,7 @@ export default function OutlinePage() {
         <CardContent className="pt-5 space-y-4">
           <div>
             <Label>选择选题 *</Label>
-            <Select value={topicId} onValueChange={(v) => setTopicId(v || "")}>
+            <Select value={topicId} onValueChange={handleTopicChange}>
               <SelectTrigger className="mt-1">
                 <SelectValue placeholder="选择一个选题" />
               </SelectTrigger>
@@ -119,11 +198,50 @@ export default function OutlinePage() {
             </Select>
           </div>
 
+          {/* 切口分析选择器 */}
+          {topicId && topicAnalyses && topicAnalyses.length > 0 && (
+            <div>
+              <Label>选择切口分析（可选）</Label>
+              <Select value={selectedAnalysisId} onValueChange={(v) => { setSelectedAnalysisId(v || ""); setSelectedAngleIndex(""); setAngle(""); }}>
+                <SelectTrigger className="mt-1">
+                  <SelectValue placeholder="选择一次分析记录" />
+                </SelectTrigger>
+                <SelectContent>
+                  {topicAnalyses.map((a) => (
+                    <SelectItem key={a.id} value={a.id}>
+                      {new Date(a.createdAt || a.created_at).toLocaleString("zh-CN")} · {a.modelUsed || a.model_used}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
+          {/* 具体切口选择 */}
+          {selectedAnalysisId && currentAngles.length > 0 && (
+            <div>
+              <Label>选择切口方向（可选）</Label>
+              <Select value={selectedAngleIndex} onValueChange={handleAngleSelect}>
+                <SelectTrigger className="mt-1">
+                  <SelectValue placeholder="选择一个切口" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="_manual">手动输入</SelectItem>
+                  {currentAngles.map((a, i) => (
+                    <SelectItem key={i} value={String(i)}>
+                      {a.name} — {a.suitability === "high" ? "高适合" : a.suitability === "medium" ? "中等" : "较低"}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
           <div>
             <Label>写作切口（可选）</Label>
             <Input
               value={angle}
-              onChange={(e) => setAngle(e.target.value)}
+              onChange={(e) => { setAngle(e.target.value); setSelectedAngleIndex("_manual"); }}
               placeholder="比如：从个人体验角度切入"
               className="mt-1"
             />
@@ -158,8 +276,21 @@ export default function OutlinePage() {
             {currentResult.coreTension && (
               <Card className="border-primary/20">
                 <CardContent className="pt-4">
-                  <p className="text-xs text-primary mb-1 font-medium">🎯 核心矛盾</p>
-                  <p className="text-sm">{currentResult.coreTension}</p>
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="text-xs text-primary mb-1 font-medium">🎯 核心矛盾</p>
+                      <p className="text-sm">{currentResult.coreTension}</p>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="shrink-0 text-xs"
+                      disabled={savingKeys.has("core")}
+                      onClick={() => handleSaveToMaterials(currentResult.coreTension, "opinion", "core")}
+                    >
+                      {savingKeys.has("core") ? "..." : "💾"}
+                    </Button>
+                  </div>
                 </CardContent>
               </Card>
             )}
@@ -168,52 +299,106 @@ export default function OutlinePage() {
             {currentResult.opening && (
               <Card>
                 <CardContent className="pt-4">
-                  <p className="text-xs text-muted-foreground mb-1 font-medium">📖 开头方式：{currentResult.opening.method}</p>
-                  <p className="text-sm">{currentResult.opening.description}</p>
-                  {currentResult.opening.example && (
-                    <p className="text-sm text-muted-foreground mt-2 italic border-l-2 border-primary/30 pl-3">
-                      {currentResult.opening.example}
-                    </p>
-                  )}
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs text-muted-foreground mb-1 font-medium">📖 开头方式：{currentResult.opening.method}</p>
+                      <p className="text-sm">{currentResult.opening.description}</p>
+                      {currentResult.opening.example && (
+                        <p className="text-sm text-muted-foreground mt-2 italic border-l-2 border-primary/30 pl-3">
+                          {currentResult.opening.example}
+                        </p>
+                      )}
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="shrink-0 text-xs"
+                      disabled={savingKeys.has("opening")}
+                      onClick={() => handleSaveToMaterials(
+                        `开头方式：${currentResult.opening.method}\n${currentResult.opening.description}${currentResult.opening.example ? `\n示例：${currentResult.opening.example}` : ""}`,
+                        "opening",
+                        "opening"
+                      )}
+                    >
+                      {savingKeys.has("opening") ? "..." : "💾"}
+                    </Button>
+                  </div>
                 </CardContent>
               </Card>
             )}
 
             {/* 主体部分 */}
-            {currentResult.sections?.map((section: AnyRecord, i: number) => (
-              <Card key={i}>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm flex items-center gap-2">
-                    第 {i + 1} 部分：{section.title}
-                    <Badge variant="outline" className="text-xs">{section.contentType}</Badge>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  {section.keyPoints && (
-                    <ul className="space-y-1">
-                      {section.keyPoints.map((point: string, j: number) => (
-                        <li key={j} className="text-sm text-muted-foreground">• {point}</li>
-                      ))}
-                    </ul>
-                  )}
-                  {section.materialSuggestion && (
-                    <p className="text-xs text-primary/80">💡 {section.materialSuggestion}</p>
-                  )}
-                </CardContent>
-              </Card>
-            ))}
+            {currentResult.sections?.map((section: AnyRecord, i: number) => {
+              const sectionKey = `section-${i}`;
+              const sectionContent = [
+                `${section.title}（${section.contentType}）`,
+                ...(section.keyPoints || []).map((p: string) => `• ${p}`),
+                section.materialSuggestion ? `素材建议：${section.materialSuggestion}` : "",
+              ].filter(Boolean).join("\n");
+
+              return (
+                <Card key={i}>
+                  <CardHeader className="pb-2">
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="text-sm flex items-center gap-2">
+                        第 {i + 1} 部分：{section.title}
+                        <Badge variant="outline" className="text-xs">{section.contentType}</Badge>
+                      </CardTitle>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="shrink-0 text-xs"
+                        disabled={savingKeys.has(sectionKey)}
+                        onClick={() => handleSaveToMaterials(sectionContent, "outline", sectionKey)}
+                      >
+                        {savingKeys.has(sectionKey) ? "..." : "💾"}
+                      </Button>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    {section.keyPoints && (
+                      <ul className="space-y-1">
+                        {section.keyPoints.map((point: string, j: number) => (
+                          <li key={j} className="text-sm text-muted-foreground">• {point}</li>
+                        ))}
+                      </ul>
+                    )}
+                    {section.materialSuggestion && (
+                      <p className="text-xs text-primary/80">💡 {section.materialSuggestion}</p>
+                    )}
+                  </CardContent>
+                </Card>
+              );
+            })}
 
             {/* 结尾 */}
             {currentResult.ending && (
               <Card>
                 <CardContent className="pt-4">
-                  <p className="text-xs text-muted-foreground mb-1 font-medium">🔚 结尾方式：{currentResult.ending.method}</p>
-                  <p className="text-sm">{currentResult.ending.description}</p>
-                  {currentResult.ending.example && (
-                    <p className="text-sm text-muted-foreground mt-2 italic border-l-2 border-primary/30 pl-3">
-                      {currentResult.ending.example}
-                    </p>
-                  )}
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs text-muted-foreground mb-1 font-medium">🔚 结尾方式：{currentResult.ending.method}</p>
+                      <p className="text-sm">{currentResult.ending.description}</p>
+                      {currentResult.ending.example && (
+                        <p className="text-sm text-muted-foreground mt-2 italic border-l-2 border-primary/30 pl-3">
+                          {currentResult.ending.example}
+                        </p>
+                      )}
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="shrink-0 text-xs"
+                      disabled={savingKeys.has("ending")}
+                      onClick={() => handleSaveToMaterials(
+                        `结尾方式：${currentResult.ending.method}\n${currentResult.ending.description}${currentResult.ending.example ? `\n示例：${currentResult.ending.example}` : ""}`,
+                        "closing",
+                        "ending"
+                      )}
+                    >
+                      {savingKeys.has("ending") ? "..." : "💾"}
+                    </Button>
+                  </div>
                 </CardContent>
               </Card>
             )}
@@ -248,23 +433,44 @@ export default function OutlinePage() {
         ) : (
           <div className="space-y-3">
             {historyList.map((record) => {
-              const result = typeof record.result === "string" ? JSON.parse(record.result) : record.result;
+              const isGenerating = record.status === "generating";
+              const isError = record.status === "error";
+              const result = isGenerating || isError
+                ? {}
+                : (typeof record.result === "string" ? JSON.parse(record.result) : record.result);
               return (
-                <Card key={record.id} className="cursor-pointer hover:border-primary/30 transition-colors" onClick={() => {
-                  const edited = record.editedResult || record.edited_result;
-                  const displayResult = edited ? (typeof edited === "string" ? JSON.parse(edited) : edited) : result;
-                  setCurrentResult(displayResult);
-                  setCurrentId(record.id);
-                  setEditing(false);
-                }}>
+                <Card
+                  key={record.id}
+                  className={`cursor-pointer transition-colors ${isGenerating ? "opacity-70 border-amber-500/30" : "hover:border-primary/30"}`}
+                  onClick={() => {
+                    if (isGenerating) return;
+                    const edited = record.editedResult || record.edited_result;
+                    const displayResult = edited ? (typeof edited === "string" ? JSON.parse(edited) : edited) : result;
+                    setCurrentResult(displayResult);
+                    setCurrentId(record.id);
+                    setEditing(false);
+                  }}
+                >
                   <CardContent className="pt-4">
                     <div className="flex items-center justify-between">
                       <div>
-                        <p className="text-sm font-medium">{result?.coreTension || "骨架记录"}</p>
-                        <p className="text-xs text-muted-foreground mt-1">
-                          {result?.sections?.length || 0} 个段落 · {record.modelUsed || record.model_used} ·{" "}
-                          {new Date(record.createdAt || record.created_at).toLocaleString("zh-CN")}
-                        </p>
+                        {isGenerating ? (
+                          <Badge variant="outline" className="bg-amber-500/20 text-amber-400 border-amber-500/30">
+                            生成中...
+                          </Badge>
+                        ) : isError ? (
+                          <Badge variant="outline" className="bg-red-500/20 text-red-400 border-red-500/30">
+                            失败
+                          </Badge>
+                        ) : (
+                          <>
+                            <p className="text-sm font-medium">{result?.coreTension || "骨架记录"}</p>
+                            <p className="text-xs text-muted-foreground mt-1">
+                              {result?.sections?.length || 0} 个段落 · {record.modelUsed || record.model_used} ·{" "}
+                              {new Date(record.createdAt || record.created_at).toLocaleString("zh-CN")}
+                            </p>
+                          </>
+                        )}
                       </div>
                       {(record.editedResult || record.edited_result) && (
                         <Badge variant="outline" className="text-xs">已编辑</Badge>

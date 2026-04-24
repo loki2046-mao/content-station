@@ -60,12 +60,14 @@ export default function DashboardPage() {
   const { data: allTopics } = useApiGet<AnyRecord[]>("/api/topics?limit=9999");
   const { data: titlesData, loading: titlesLoading } = useApiGet<AnyRecord[]>("/api/titles?limit=5");
   const { data: materialsData, loading: materialsLoading } = useApiGet<AnyRecord[]>("/api/materials?limit=5");
+  const { data: hotspotsData } = useApiGet<AnyRecord[]>("/api/hotspots?status=new&days=3");
 
   // 统计数据
   const totalTopics = allTopics?.length ?? 0;
   const unprocessed = allTopics?.filter((t) => t.status === "unprocessed").length ?? 0;
   const published = allTopics?.filter((t) => t.status === "published").length ?? 0;
   const totalMaterials = materialsData?.length ?? 0;
+  const newHotspots = hotspotsData?.length ?? 0;
 
   return (
     <div className="space-y-8">
@@ -75,11 +77,14 @@ export default function DashboardPage() {
       />
 
       {/* 统计卡片 */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <StatCard label="选题总数" value={totalTopics} icon="📋" />
         <StatCard label="待处理" value={unprocessed} icon="⏳" />
         <StatCard label="已发布" value={published} icon="✅" />
         <StatCard label="素材数" value={totalMaterials} icon="📝" />
+        <Link href="/hotspots">
+          <StatCard label="新热点" value={newHotspots} icon="🔥" />
+        </Link>
       </div>
 
       {/* 快捷入口 */}

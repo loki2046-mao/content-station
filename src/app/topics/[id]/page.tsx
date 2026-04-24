@@ -6,6 +6,7 @@
 
 import { useState, use } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { useApiGet, apiFetch } from "@/hooks/use-api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -20,6 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/page-header";
 import { StatusBadge } from "@/components/status-badge";
 import { EmptyState, SkeletonCard } from "@/components/loading";
@@ -27,6 +29,12 @@ import { toast } from "sonner";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyRecord = Record<string, any>;
+
+const SUITABILITY_COLORS: Record<string, string> = {
+  high: "bg-green-500/20 text-green-400 border-green-500/30",
+  medium: "bg-amber-500/20 text-amber-400 border-amber-500/30",
+  low: "bg-red-500/20 text-red-400 border-red-500/30",
+};
 
 const STATUS_OPTIONS = [
   { value: "unprocessed", label: "未处理" },
@@ -41,6 +49,7 @@ export default function TopicDetailPage({ params }: { params: Promise<{ id: stri
   const router = useRouter();
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [expandedAnalysis, setExpandedAnalysis] = useState<string | null>(null);
 
   const { data: topic, loading, refresh } = useApiGet<AnyRecord>(`/api/topics/${id}`);
   const { data: analysesData } = useApiGet<AnyRecord[]>(`/api/analyses?topicId=${id}`);
@@ -166,24 +175,69 @@ export default function TopicDetailPage({ params }: { params: Promise<{ id: stri
 
         <TabsContent value="analyses" className="space-y-3 mt-4">
           {!analysesData?.length ? (
-            <EmptyState title="暂无切口分析" description="去切口分析页面为这个选题生成分析" />
+            <EmptyState
+              title="暂无切口分析"
+              description={
+                <span>
+                  去<Link href={`/analyze`} className="text-primary hover:underline mx-1">切口分析页面</Link>为这个选题生成分析
+                </span>
+              }
+            />
           ) : (
             analysesData.map((a) => {
               const result = typeof a.result === "string" ? JSON.parse(a.result) : a.result;
+              const isExpanded = expandedAnalysis === a.id;
               return (
-                <Card key={a.id}>
+                <Card
+                  key={a.id}
+                  className={`cursor-pointer transition-colors ${isExpanded ? "border-primary/50" : "hover:border-primary/30"}`}
+                  onClick={() => setExpandedAnalysis(isExpanded ? null : a.id)}
+                >
                   <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-normal text-muted-foreground">
-                      {new Date(a.createdAt || a.created_at).toLocaleString("zh-CN")} · {a.modelUsed || a.model_used}
+                    <CardTitle className="text-sm font-normal flex items-center gap-2">
+                      <span className="text-muted-foreground">
+                        {new Date(a.createdAt || a.created_at).toLocaleString("zh-CN")} · {a.modelUsed || a.model_used}
+                      </span>
+                      <span className="text-xs text-muted-foreground ml-auto">{isExpanded ? "收起 ▲" : "展开 ▼"}</span>
                     </CardTitle>
                   </CardHeader>
-                  <CardContent className="grid md:grid-cols-2 gap-3">
-                    {Array.isArray(result) && result.map((angle: AnyRecord, i: number) => (
-                      <div key={i} className="p-3 rounded-lg bg-muted/50">
-                        <p className="font-medium text-sm">{angle.name}</p>
-                        <p className="text-xs text-muted-foreground mt-1">{angle.description}</p>
+                  <CardContent>
+                    {!isExpanded ? (
+                      <div className="flex flex-wrap gap-2">
+                        {Array.isArray(result) && result.map((angle: AnyRecord, i: number) => (
+                          <Badge key={i} variant="outline" className="text-xs">
+                            {angle.name}
+                          </Badge>
+                        ))}
                       </div>
-                    ))}
+                    ) : (
+                      <div className="grid md:grid-cols-2 gap-3" onClick={(e) => e.stopPropagation()}>
+                        {Array.isArray(result) && result.map((angle: AnyRecord, i: number) => (
+                          <div key={i} className="p-3 rounded-lg bg-muted/50 space-y-2">
+                            <div className="flex items-center gap-2">
+                              <p className="font-medium text-sm">{angle.name}</p>
+                              <Badge variant="outline" className={`text-xs ${SUITABILITY_COLORS[angle.suitability] || ""}`}>
+                                {angle.suitability === "high" ? "高适合" : angle.suitability === "medium" ? "中等" : "较低"}
+                              </Badge>
+                            </div>
+                            <p className="text-xs text-muted-foreground">{angle.description}</p>
+                            {angle.suitabilityReason && (
+                              <p className="text-xs text-muted-foreground italic">{angle.suitabilityReason}</p>
+                            )}
+                            {angle.articleType && (
+                              <Badge variant="outline" className="text-xs">{angle.articleType}</Badge>
+                            )}
+                            {angle.expandPoints && (
+                              <ul className="text-xs text-muted-foreground space-y-1">
+                                {angle.expandPoints.map((point: string, j: number) => (
+                                  <li key={j}>• {point}</li>
+                                ))}
+                              </ul>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               );
@@ -193,7 +247,14 @@ export default function TopicDetailPage({ params }: { params: Promise<{ id: stri
 
         <TabsContent value="titles" className="space-y-3 mt-4">
           {!titlesData?.length ? (
-            <EmptyState title="暂无标题方案" description="去标题生成页面为这个选题生成标题" />
+            <EmptyState
+              title="暂无标题方案"
+              description={
+                <span>
+                  去<Link href={`/titles`} className="text-primary hover:underline mx-1">标题生成页面</Link>为这个选题生成标题
+                </span>
+              }
+            />
           ) : (
             titlesData.map((t) => {
               const result = typeof t.result === "string" ? JSON.parse(t.result) : t.result;
@@ -220,7 +281,14 @@ export default function TopicDetailPage({ params }: { params: Promise<{ id: stri
 
         <TabsContent value="outlines" className="space-y-3 mt-4">
           {!outlinesData?.length ? (
-            <EmptyState title="暂无文章骨架" description="去骨架生成页面为这个选题生成骨架" />
+            <EmptyState
+              title="暂无文章骨架"
+              description={
+                <span>
+                  去<Link href={`/outline`} className="text-primary hover:underline mx-1">骨架生成页面</Link>为这个选题生成骨架
+                </span>
+              }
+            />
           ) : (
             outlinesData.map((o) => {
               const result = typeof o.result === "string" ? JSON.parse(o.result) : o.result;

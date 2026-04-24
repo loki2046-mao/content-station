@@ -1,6 +1,7 @@
 /**
  * 素材库页面
  * 管理所有素材：观点、金句、标题灵感、例子、开头句、结尾句
+ * 以及来自测评的内容素材
  */
 "use client";
 
@@ -11,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
   DialogContent,
@@ -25,6 +27,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PageHeader } from "@/components/page-header";
 import { MaterialTypeBadge } from "@/components/status-badge";
 import { SkeletonCard, EmptyState } from "@/components/loading";
@@ -45,6 +48,13 @@ const TYPE_OPTIONS = [
 
 const CREATE_TYPE_OPTIONS = TYPE_OPTIONS.filter((t) => t.value !== "all");
 
+const RATING_LABELS: Record<string, string> = {
+  success: "✅ 通过",
+  fail: "❌ 失败",
+  crash: "💥 崩溃",
+  exceed: "🌟 超预期",
+};
+
 export default function MaterialsPage() {
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
@@ -62,6 +72,10 @@ export default function MaterialsPage() {
   const { data: materialsList, loading, refresh } = useApiGet<AnyRecord[]>(
     `/api/materials${queryStr ? `?${queryStr}` : ""}`
   );
+
+  // 测评素材
+  const { data: evalMaterialsList, loading: evalLoading, refresh: refreshEvalMaterials } =
+    useApiGet<AnyRecord[]>("/api/eval/content-materials?source_type=eval_result");
 
   // 新建素材
   const handleCreate = useCallback(
@@ -169,90 +183,202 @@ export default function MaterialsPage() {
         }
       />
 
-      {/* 筛选栏 */}
-      <div className="flex flex-col sm:flex-row gap-3">
-        <Input
-          placeholder="搜索素材..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="sm:max-w-xs"
-        />
-        <Select value={typeFilter} onValueChange={(v) => setTypeFilter(v || "all")}>
-          <SelectTrigger className="sm:w-40">
-            <SelectValue placeholder="类型筛选" />
-          </SelectTrigger>
-          <SelectContent>
-            {TYPE_OPTIONS.map((opt) => (
-              <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
+      <Tabs defaultValue="general">
+        <TabsList>
+          <TabsTrigger value="general">
+            全部素材 {materialsList ? `(${materialsList.length})` : ""}
+          </TabsTrigger>
+          <TabsTrigger value="eval">
+            测评素材 {evalMaterialsList ? `(${evalMaterialsList.length})` : ""}
+          </TabsTrigger>
+        </TabsList>
 
-      {/* 素材列表 */}
-      {loading ? (
-        <div className="grid gap-3">
-          {[1, 2, 3, 4].map((i) => (
-            <SkeletonCard key={i} />
-          ))}
-        </div>
-      ) : !materialsList?.length ? (
-        <EmptyState
-          icon="📝"
-          title="还没有素材"
-          description="点击右上角开始收集你的第一条素材"
-        />
-      ) : (
-        <div className="grid gap-3">
-          {materialsList.map((material) => (
-            <Card key={material.id} className="hover:border-primary/20 transition-colors">
-              <CardContent className="pt-4 pb-4">
-                {editingId === material.id ? (
-                  // 编辑模式
-                  <div className="space-y-3">
-                    <Select value={editType} onValueChange={(v) => setEditType(v || "opinion")}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {CREATE_TYPE_OPTIONS.map((opt) => (
-                          <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <Textarea
-                      value={editContent}
-                      onChange={(e) => setEditContent(e.target.value)}
-                      rows={4}
-                    />
-                    <div className="flex gap-2">
-                      <Button size="sm" onClick={saveEdit} className="bg-primary hover:bg-primary/90">保存</Button>
-                      <Button size="sm" variant="outline" onClick={() => setEditingId(null)}>取消</Button>
-                    </div>
-                  </div>
-                ) : (
-                  // 展示模式
-                  <div className="flex items-start gap-3">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-2">
-                        <MaterialTypeBadge type={material.type} />
-                        <span className="text-xs text-muted-foreground">
-                          {new Date(material.createdAt || material.created_at).toLocaleDateString("zh-CN")}
-                        </span>
+        {/* ===== 通用素材 Tab ===== */}
+        <TabsContent value="general" className="space-y-4">
+          {/* 筛选栏 */}
+          <div className="flex flex-col sm:flex-row gap-3">
+            <Input
+              placeholder="搜索素材..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="sm:max-w-xs"
+            />
+            <Select value={typeFilter} onValueChange={(v) => setTypeFilter(v || "all")}>
+              <SelectTrigger className="sm:w-40">
+                <SelectValue placeholder="类型筛选" />
+              </SelectTrigger>
+              <SelectContent>
+                {TYPE_OPTIONS.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* 素材列表 */}
+          {loading ? (
+            <div className="grid gap-3">
+              {[1, 2, 3, 4].map((i) => (
+                <SkeletonCard key={i} />
+              ))}
+            </div>
+          ) : !materialsList?.length ? (
+            <EmptyState
+              icon="📝"
+              title="还没有素材"
+              description="点击右上角开始收集你的第一条素材"
+            />
+          ) : (
+            <div className="grid gap-3">
+              {materialsList.map((material) => (
+                <Card key={material.id} className="hover:border-primary/20 transition-colors">
+                  <CardContent className="pt-4 pb-4">
+                    {editingId === material.id ? (
+                      // 编辑模式
+                      <div className="space-y-3">
+                        <Select value={editType} onValueChange={(v) => setEditType(v || "opinion")}>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {CREATE_TYPE_OPTIONS.map((opt) => (
+                              <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Textarea
+                          value={editContent}
+                          onChange={(e) => setEditContent(e.target.value)}
+                          rows={4}
+                        />
+                        <div className="flex gap-2">
+                          <Button size="sm" onClick={saveEdit} className="bg-primary hover:bg-primary/90">保存</Button>
+                          <Button size="sm" variant="outline" onClick={() => setEditingId(null)}>取消</Button>
+                        </div>
                       </div>
-                      <p className="text-sm whitespace-pre-wrap">{material.content}</p>
+                    ) : (
+                      // 展示模式
+                      <div className="flex items-start gap-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-2">
+                            <MaterialTypeBadge type={material.type} />
+                            <span className="text-xs text-muted-foreground">
+                              {new Date(material.createdAt || material.created_at).toLocaleDateString("zh-CN")}
+                            </span>
+                          </div>
+                          <p className="text-sm whitespace-pre-wrap">{material.content}</p>
+                        </div>
+                        <div className="flex gap-1 shrink-0">
+                          <Button variant="ghost" size="sm" onClick={() => startEdit(material)}>✏️</Button>
+                          <Button variant="ghost" size="sm" onClick={() => handleDelete(material.id)}>🗑️</Button>
+                        </div>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+        </TabsContent>
+
+        {/* ===== 测评素材 Tab ===== */}
+        <TabsContent value="eval" className="space-y-4">
+          {evalLoading ? (
+            <div className="grid gap-3">
+              {[1, 2, 3].map((i) => <SkeletonCard key={i} />)}
+            </div>
+          ) : !evalMaterialsList?.length ? (
+            <EmptyState
+              icon="🧪"
+              title="还没有测评素材"
+              description="在测评工作区点击「→ 转素材」，测试记录会出现在这里"
+            />
+          ) : (
+            <div className="grid gap-4">
+              {evalMaterialsList.map((m: AnyRecord) => (
+                <Card key={m.id} className="hover:border-primary/20 transition-colors">
+                  <CardContent className="pt-4 pb-4 space-y-3">
+                    {/* 顶部元信息 */}
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {m.testSubject && (
+                            <Badge variant="outline" className="text-xs font-medium">
+                              {m.testSubject}
+                            </Badge>
+                          )}
+                          {m.resultSummary && (
+                            <span className="text-xs">
+                              {RATING_LABELS[m.resultSummary] || m.resultSummary}
+                            </span>
+                          )}
+                          {m.evalGoal && (
+                            <span className="text-xs text-muted-foreground">目标：{m.evalGoal}</span>
+                          )}
+                        </div>
+                        {m.taskDescription && (
+                          <p className="text-xs text-muted-foreground">{m.taskDescription}</p>
+                        )}
+                      </div>
+                      <span className="text-xs text-muted-foreground shrink-0">
+                        {new Date(m.createdAt).toLocaleDateString("zh-CN")}
+                      </span>
                     </div>
-                    <div className="flex gap-1 shrink-0">
-                      <Button variant="ghost" size="sm" onClick={() => startEdit(material)}>✏️</Button>
-                      <Button variant="ghost" size="sm" onClick={() => handleDelete(material.id)}>🗑️</Button>
-                    </div>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      )}
+
+                    {/* 亮点 / 问题 */}
+                    {(m.highlights || m.issues) && (
+                      <div className="space-y-1">
+                        {m.highlights && (
+                          <p className="text-sm">
+                            <span className="text-green-500 mr-1">✓</span>{m.highlights}
+                          </p>
+                        )}
+                        {m.issues && (
+                          <p className="text-sm">
+                            <span className="text-red-500 mr-1">✗</span>{m.issues}
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    {/* 标题方向 */}
+                    {Array.isArray(m.titleDirections) && m.titleDirections.length > 0 && (
+                      <div>
+                        <p className="text-xs font-medium text-muted-foreground mb-1">📌 标题方向</p>
+                        <ul className="space-y-1">
+                          {m.titleDirections.map((t: string, i: number) => (
+                            <li key={i} className="text-sm bg-muted/50 rounded px-2 py-1">{t}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {/* 写作角度 */}
+                    {Array.isArray(m.articleAngles) && m.articleAngles.length > 0 && (
+                      <div>
+                        <p className="text-xs font-medium text-muted-foreground mb-1">✍️ 写作角度</p>
+                        <ul className="space-y-1">
+                          {m.articleAngles.map((a: string, i: number) => (
+                            <li key={i} className="text-sm bg-muted/50 rounded px-2 py-1">{a}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {/* 可提炼观点 */}
+                    {m.extractableInsight && (
+                      <p className="text-sm text-muted-foreground">
+                        <span className="font-medium text-foreground">💡 观点：</span>
+                        {m.extractableInsight}
+                      </p>
+                    )}
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

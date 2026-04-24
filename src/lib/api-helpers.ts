@@ -20,7 +20,7 @@ export function dbError() {
 
 /** 模型未配置的统一错误 */
 export function modelError() {
-  return err("模型未配置，请先在设置中配置 API Key", 400);
+  return err("请先在设置页配置文本模型 API Key", 400);
 }
 
 /**
@@ -41,18 +41,28 @@ export function safeParseJson<T>(str: string | null | undefined, fallback: T): T
  * 模型可能在 JSON 前后加入说明文字，需要提取 ```json ... ``` 中的内容
  */
 export function extractJson(text: string): string {
-  // 尝试提取 ```json ... ``` 块
-  const jsonBlockMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
+  // 先去掉开头的 ```json 或 ``` 标记（不管有没有闭合的 ```）
+  let cleaned = text.trim();
+  if (cleaned.startsWith("```")) {
+    // 去掉开头的 ```json 或 ```
+    cleaned = cleaned.replace(/^```(?:json)?\s*\n?/, "");
+    // 去掉结尾的 ```（如果有）
+    cleaned = cleaned.replace(/\n?\s*```\s*$/, "");
+    cleaned = cleaned.trim();
+  }
+
+  // 尝试提取 ```json ... ``` 块（处理文本中间包含代码块的情况）
+  const jsonBlockMatch = cleaned.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
   if (jsonBlockMatch) {
     return jsonBlockMatch[1].trim();
   }
 
   // 尝试提取最外层的 JSON 数组或对象
-  const arrayMatch = text.match(/\[[\s\S]*\]/);
+  const arrayMatch = cleaned.match(/\[[\s\S]*\]/);
   if (arrayMatch) return arrayMatch[0];
 
-  const objMatch = text.match(/\{[\s\S]*\}/);
+  const objMatch = cleaned.match(/\{[\s\S]*\}/);
   if (objMatch) return objMatch[0];
 
-  return text.trim();
+  return cleaned.trim();
 }
