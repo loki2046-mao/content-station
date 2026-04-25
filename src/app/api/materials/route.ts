@@ -1,7 +1,8 @@
 /**
  * 素材库 API
- * GET  /api/materials — 获取素材列表
- * POST /api/materials — 新建素材
+ * GET    /api/materials — 获取素材列表
+ * POST   /api/materials — 新建素材
+ * DELETE /api/materials?source=wechat_article — 按来源清空素材（不传source则清空全部）
  */
 import { NextRequest } from "next/server";
 import { v4 as uuid } from "uuid";
@@ -50,6 +51,26 @@ export async function GET(request: NextRequest) {
     return ok(result);
   } catch (error) {
     return err(`获取素材列表失败: ${error}`, 500);
+  }
+}
+
+export async function DELETE(request: NextRequest) {
+  await ensureDbInit();
+  const db = getDb();
+  if (!db) return dbError();
+
+  try {
+    const { searchParams } = new URL(request.url);
+    const source = searchParams.get("source");
+
+    if (source) {
+      await db.delete(materials).where(eq(materials.sourceType, source));
+    } else {
+      await db.delete(materials);
+    }
+    return ok({ deleted: true, source: source || "all" });
+  } catch (error) {
+    return err(`清空素材失败: ${error}`, 500);
   }
 }
 
