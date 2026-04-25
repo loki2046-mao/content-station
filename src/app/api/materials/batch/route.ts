@@ -35,7 +35,7 @@ export async function POST(request: NextRequest) {
       .map((item) => ({
         id: uuid(),
         content: item.content,
-        type: item.type as "opinion" | "quote" | "title_inspiration" | "example" | "opening" | "closing" | "title" | "angle" | "outline" | "general",
+        type: item.type as "opinion" | "quote" | "title_inspiration" | "example" | "opening" | "closing" | "title" | "angle" | "outline" | "general" | "prompt",
         tags: JSON.stringify(item.tags || []),
         topicIds: JSON.stringify([]),
         sourceType: item.sourceType || "",

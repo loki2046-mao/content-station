@@ -23,6 +23,7 @@ const MATERIAL_TYPE_MAP: Record<string, { label: string; className: string }> = 
   angle: { label: "切口", className: "bg-indigo-500/20 text-indigo-400 border-indigo-500/30" },
   outline: { label: "骨架", className: "bg-cyan-500/20 text-cyan-400 border-cyan-500/30" },
   general: { label: "通用", className: "bg-zinc-500/20 text-zinc-400 border-zinc-500/30" },
+  prompt: { label: "提示词", className: "bg-purple-500/20 text-purple-400 border-purple-500/30" },
 };
 
 export function StatusBadge({ status }: { status: string }) {

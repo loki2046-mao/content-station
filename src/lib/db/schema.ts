@@ -76,7 +76,7 @@ export const materials = sqliteTable("materials", {
   id: text("id").primaryKey(),
   content: text("content").notNull(),
   type: text("type", {
-    enum: ["opinion", "quote", "title_inspiration", "example", "opening", "closing", "title", "angle", "outline", "general"],
+    enum: ["opinion", "quote", "title_inspiration", "example", "opening", "closing", "title", "angle", "outline", "general", "prompt"],
   }).notNull(),
   tags: text("tags").default("[]"), // JSON 数组
   topicIds: text("topic_ids").default("[]"), // JSON：关联选题ID列表

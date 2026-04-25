@@ -22,6 +22,7 @@ const NAV_ITEMS = [
   { href: "/titles", label: "标题生成", icon: "✍️" },
   { href: "/outline", label: "骨架生成", icon: "🏗️" },
   { href: "/materials", label: "素材库", icon: "📝" },
+  { href: "/import", label: "导入", icon: "📥" },
   { href: "/eval", label: "测评工作台", icon: "🧪" },
   { href: "/brain", label: "外脑", icon: "🧠" },
   { href: "/settings", label: "设置", icon: "⚙️" },

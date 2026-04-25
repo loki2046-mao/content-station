@@ -44,6 +44,7 @@ const TYPE_OPTIONS = [
   { value: "example", label: "例子" },
   { value: "opening", label: "开头句" },
   { value: "closing", label: "结尾句" },
+  { value: "prompt", label: "提示词" },
 ];
 
 const CREATE_TYPE_OPTIONS = TYPE_OPTIONS.filter((t) => t.value !== "all");
