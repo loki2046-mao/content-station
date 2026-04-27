@@ -1,9 +1,10 @@
 /**
  * 文章详情 / Pipeline 进度页
+ * 带轮询、阶段产出展示、用户交互决策
  */
 "use client";
 
-import { useState, useCallback, use } from "react";
+import { useState, useCallback, useEffect, use, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useApiGet, apiFetch } from "@/hooks/use-api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,7 +15,16 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { SkeletonCard } from "@/components/loading";
 import { toast } from "sonner";
-import { ChevronDown, ChevronRight, CheckCircle2, Circle, ArrowRight, Pencil } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  CheckCircle2,
+  Circle,
+  Loader2,
+  ExternalLink,
+  RefreshCw,
+  Pencil,
+} from "lucide-react";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyRecord = Record<string, any>;
@@ -37,15 +47,373 @@ const ARTICLE_STATUS_CONFIG: Record<string, { label: string; color: string }> = 
 };
 
 const STEP_STATUS_CONFIG: Record<string, { label: string; color: string; dot: string }> = {
-  running:          { label: "进行中",   color: "bg-blue-500/15 text-blue-400 border-blue-500/30",       dot: "bg-blue-400" },
-  waiting_decision: { label: "等待决策", color: "bg-orange-500/15 text-orange-400 border-orange-500/30", dot: "bg-orange-400" },
+  running:          { label: "AI生成中",  color: "bg-blue-500/15 text-blue-400 border-blue-500/30",       dot: "bg-blue-400" },
+  waiting_decision: { label: "等待确认", color: "bg-orange-500/15 text-orange-400 border-orange-500/30", dot: "bg-orange-400" },
   completed:        { label: "已完成",   color: "bg-green-500/15 text-green-400 border-green-500/30",    dot: "bg-green-400" },
   pending:          { label: "待开始",   color: "bg-muted/60 text-muted-foreground border-border",       dot: "bg-muted-foreground/40" },
   failed:           { label: "失败",     color: "bg-red-500/15 text-red-400 border-red-500/30",          dot: "bg-red-400" },
   skipped:          { label: "已跳过",   color: "bg-muted/60 text-muted-foreground border-border",       dot: "bg-muted-foreground/40" },
 };
 
-/** 阶段进度条 */
+function safeJson<T = AnyRecord>(str: string | null | undefined): T | null {
+  if (!str || str === "{}" || str === "null") return null;
+  try { return JSON.parse(str) as T; } catch { return null; }
+}
+
+// ─────────────────────────────────────────────
+// Stage Output Components
+// ─────────────────────────────────────────────
+
+/** topic 阶段输出：角度选择卡片 */
+function TopicOutput({
+  output,
+  onSelect,
+  selectedAngle,
+}: {
+  output: AnyRecord;
+  onSelect: (angle: string) => void;
+  selectedAngle: string;
+}) {
+  const angles: AnyRecord[] = output?.angles || [];
+  if (!angles.length) return <p className="text-sm text-muted-foreground">暂无输出</p>;
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-muted-foreground font-medium">AI 分析了 {angles.length} 个写作角度，请选择一个：</p>
+      {angles.map((angle, i) => {
+        const angleStr = `${angle.name}：${angle.description}`;
+        const isSelected = selectedAngle === angleStr;
+        return (
+          <div
+            key={i}
+            onClick={() => onSelect(angleStr)}
+            className={`cursor-pointer rounded-lg border-2 p-4 transition-all ${
+              isSelected
+                ? "border-primary bg-primary/10"
+                : "border-border hover:border-primary/40 hover:bg-muted/30"
+            }`}
+          >
+            <div className="flex items-start justify-between gap-2 mb-1.5">
+              <div className="flex items-center gap-2">
+                {isSelected && <CheckCircle2 className="w-4 h-4 text-primary flex-shrink-0" />}
+                <span className="font-medium text-sm">{angle.name}</span>
+              </div>
+              <Badge variant="outline" className="text-xs border-border text-muted-foreground shrink-0">
+                {angle.articleType}
+              </Badge>
+            </div>
+            <p className="text-sm text-foreground/80 mb-2">{angle.description}</p>
+            {angle.targetAudience && (
+              <p className="text-xs text-muted-foreground">目标读者：{angle.targetAudience}</p>
+            )}
+          </div>
+        );
+      })}
+      <div className="pt-1">
+        <Label className="text-xs text-muted-foreground">或自定义角度：</Label>
+        <Textarea
+          value={!angles.some((a) => `${a.name}：${a.description}` === selectedAngle) ? selectedAngle : ""}
+          onChange={(e) => onSelect(e.target.value)}
+          placeholder="输入自定义角度描述..."
+          className="mt-1.5 text-sm"
+          rows={2}
+        />
+      </div>
+    </div>
+  );
+}
+
+/** material 阶段输出：素材整理 */
+function MaterialOutput({ output }: { output: AnyRecord }) {
+  const usefulMaterials: AnyRecord[] = output?.usefulMaterials || [];
+  const suggestions: AnyRecord[] = output?.suggestions || [];
+  const summary: string = output?.summary || "";
+
+  return (
+    <div className="space-y-4">
+      {summary && (
+        <div className="rounded-lg bg-blue-500/10 border border-blue-500/20 p-3">
+          <p className="text-xs font-medium text-blue-400 mb-1">总体判断</p>
+          <p className="text-sm text-foreground/90">{summary}</p>
+        </div>
+      )}
+      {usefulMaterials.length > 0 && (
+        <div>
+          <p className="text-xs font-medium text-muted-foreground mb-2">
+            ✅ 可用素材（{usefulMaterials.length} 条）
+          </p>
+          <div className="space-y-2">
+            {usefulMaterials.map((m, i) => (
+              <div key={i} className="rounded-md border border-border p-3">
+                <p className="text-xs text-foreground/80 mb-1">{m.content}</p>
+                <p className="text-xs text-green-400">用法：{m.howToUse}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {suggestions.length > 0 && (
+        <div>
+          <p className="text-xs font-medium text-muted-foreground mb-2">
+            💡 建议补充的素材（{suggestions.length} 条）
+          </p>
+          <div className="space-y-2">
+            {suggestions.map((s, i) => (
+              <div key={i} className="rounded-md border border-border/60 p-3">
+                <div className="flex items-center gap-2 mb-1">
+                  <Badge variant="outline" className="text-xs border-border text-muted-foreground">
+                    {s.type}
+                  </Badge>
+                </div>
+                <p className="text-xs text-foreground/80 mb-1">{s.description}</p>
+                <p className="text-xs text-muted-foreground">来源：{s.findWhere}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** skeleton 阶段输出：骨架编辑 */
+function SkeletonOutput({
+  output,
+  editedSkeleton,
+  onEdit,
+}: {
+  output: AnyRecord;
+  editedSkeleton: string;
+  onEdit: (v: string) => void;
+}) {
+  const sections: AnyRecord[] = output?.sections || [];
+  const totalWords: number = output?.totalEstimatedWords || 0;
+  const writingTip: string = output?.writingTip || "";
+
+  return (
+    <div className="space-y-4">
+      {writingTip && (
+        <div className="rounded-lg bg-amber-500/10 border border-amber-500/20 p-3">
+          <p className="text-xs font-medium text-amber-400 mb-1">✍️ 写作提示</p>
+          <p className="text-sm text-foreground/90">{writingTip}</p>
+        </div>
+      )}
+      {sections.length > 0 && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-medium text-muted-foreground">文章结构（{sections.length} 章节，约 {totalWords} 字）</p>
+          </div>
+          {sections.map((s, i) => (
+            <div key={i} className="rounded-md border border-border p-3">
+              <div className="flex items-start justify-between gap-2 mb-2">
+                <span className="font-medium text-sm">{i + 1}. {s.title}</span>
+                <div className="flex items-center gap-2 shrink-0">
+                  <Badge variant="outline" className="text-xs border-border text-muted-foreground">
+                    {s.contentType}
+                  </Badge>
+                  <span className="text-xs text-muted-foreground">~{s.estimatedWords}字</span>
+                </div>
+              </div>
+              {s.keyPoints && (
+                <ul className="space-y-0.5">
+                  {(s.keyPoints as string[]).map((p, j) => (
+                    <li key={j} className="text-xs text-foreground/70 flex gap-1.5">
+                      <span className="text-muted-foreground mt-0.5">•</span>
+                      <span>{p}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      <div>
+        <Label className="text-xs text-muted-foreground">修改意见（可选，直接填写或粘贴修改后的结构）：</Label>
+        <Textarea
+          value={editedSkeleton}
+          onChange={(e) => onEdit(e.target.value)}
+          placeholder="如有修改，在这里写明..."
+          className="mt-1.5 text-sm"
+          rows={3}
+        />
+      </div>
+    </div>
+  );
+}
+
+/** draft 阶段输出：初稿展示+编辑 */
+function DraftOutput({
+  output,
+  editedDraft,
+  onEdit,
+}: {
+  output: AnyRecord;
+  editedDraft: string;
+  onEdit: (v: string) => void;
+}) {
+  const content: string = output?.content || "";
+  const wordCount: number = output?.wordCount || content.length;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-medium text-muted-foreground">初稿内容</p>
+        <span className="text-xs text-muted-foreground">{wordCount} 字</span>
+      </div>
+      {/* Markdown 渲染（用 pre 展示，实际生产可换 react-markdown） */}
+      <div className="rounded-lg border border-border bg-muted/10 p-4 max-h-80 overflow-y-auto">
+        <pre className="text-sm text-foreground/90 whitespace-pre-wrap font-sans leading-relaxed">
+          {content}
+        </pre>
+      </div>
+      <div>
+        <Label className="text-xs text-muted-foreground">修改内容（直接编辑，留空则使用上方原稿）：</Label>
+        <Textarea
+          value={editedDraft}
+          onChange={(e) => onEdit(e.target.value)}
+          placeholder="如需修改，在这里直接粘贴修改后的全文..."
+          className="mt-1.5 text-sm font-mono"
+          rows={6}
+        />
+      </div>
+    </div>
+  );
+}
+
+/** layout 阶段输出：排版指引 */
+function LayoutOutput({ output }: { output: AnyRecord }) {
+  const content: string = output?.content || "";
+  const wordCount: number = output?.wordCount || content.length;
+  const layoutUrl: string = output?.layoutUrl || "https://wechat-layout.hiloki.ai";
+  const layoutNote: string = output?.layoutNote || "";
+
+  return (
+    <div className="space-y-3">
+      <div className="rounded-lg bg-blue-500/10 border border-blue-500/20 p-4">
+        <p className="text-sm font-medium text-blue-400 mb-2">📐 排版说明</p>
+        <p className="text-sm text-foreground/90 mb-3">{layoutNote}</p>
+        <a
+          href={layoutUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline"
+        >
+          打开排版编辑器
+          <ExternalLink className="w-3.5 h-3.5" />
+        </a>
+      </div>
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-medium text-muted-foreground">初稿内容（约 {wordCount} 字）</p>
+      </div>
+      <div className="rounded-lg border border-border bg-muted/10 p-4 max-h-60 overflow-y-auto">
+        <pre className="text-xs text-foreground/80 whitespace-pre-wrap font-sans leading-relaxed">
+          {content}
+        </pre>
+      </div>
+    </div>
+  );
+}
+
+/** cover 阶段输出：封面方案 */
+function CoverOutput({
+  output,
+  selectedCover,
+  onSelect,
+}: {
+  output: AnyRecord;
+  selectedCover: string;
+  onSelect: (v: string) => void;
+}) {
+  const titleOptions: AnyRecord[] = output?.titleOptions || [];
+  const visualDescription: string = output?.visualDescription || "";
+  const imagePrompt: string = output?.imagePrompt || "";
+
+  return (
+    <div className="space-y-4">
+      {titleOptions.length > 0 && (
+        <div>
+          <p className="text-xs font-medium text-muted-foreground mb-2">封面大字方案（点击选择）：</p>
+          <div className="grid grid-cols-1 gap-2">
+            {titleOptions.map((opt, i) => {
+              const isSelected = selectedCover === opt.coverText;
+              return (
+                <div
+                  key={i}
+                  onClick={() => onSelect(opt.coverText)}
+                  className={`cursor-pointer rounded-lg border-2 p-3 transition-all ${
+                    isSelected
+                      ? "border-primary bg-primary/10"
+                      : "border-border hover:border-primary/40"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <div className="flex items-center gap-2">
+                      {isSelected && <CheckCircle2 className="w-3.5 h-3.5 text-primary" />}
+                      <span className="font-bold text-lg">{opt.coverText}</span>
+                    </div>
+                    <Badge variant="outline" className="text-xs border-border text-muted-foreground">
+                      {opt.style}
+                    </Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground">{opt.reason}</p>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+      {visualDescription && (
+        <div className="rounded-lg bg-muted/20 border border-border p-3">
+          <p className="text-xs font-medium text-muted-foreground mb-1">视觉方向建议</p>
+          <p className="text-sm text-foreground/80">{visualDescription}</p>
+        </div>
+      )}
+      {imagePrompt && (
+        <div className="rounded-lg bg-muted/20 border border-border p-3">
+          <p className="text-xs font-medium text-muted-foreground mb-1">AI 生图 Prompt</p>
+          <p className="text-sm text-foreground/80 font-mono">{imagePrompt}</p>
+        </div>
+      )}
+      <div>
+        <Label className="text-xs text-muted-foreground">自定义封面文字（可选）：</Label>
+        <Input
+          value={!titleOptions.some((o) => o.coverText === selectedCover) ? selectedCover : ""}
+          onChange={(e) => onSelect(e.target.value)}
+          placeholder="输入自定义封面大字..."
+          className="mt-1.5 text-sm"
+        />
+      </div>
+    </div>
+  );
+}
+
+/** ready 阶段：汇总展示 */
+function ReadyOutput({ output, article }: { output: AnyRecord; article: AnyRecord }) {
+  return (
+    <div className="space-y-3">
+      <div className="rounded-lg bg-green-500/10 border border-green-500/20 p-4">
+        <p className="text-2xl mb-2">🎉</p>
+        <p className="font-medium text-green-400">文章已完成全部流程！</p>
+        <p className="text-sm text-foreground/70 mt-1">{output?.summary}</p>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div className="rounded-lg border border-border p-3 text-center">
+          <p className="text-2xl font-bold text-primary">{output?.wordCount || 0}</p>
+          <p className="text-xs text-muted-foreground">总字数</p>
+        </div>
+        <div className="rounded-lg border border-border p-3 text-center">
+          <p className="text-xs font-medium text-foreground/80 mt-1">{article?.title}</p>
+          <p className="text-xs text-muted-foreground">最终标题</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+// Stage Progress Bar
+// ─────────────────────────────────────────────
 function StageProgressBar({
   currentStage,
   steps,
@@ -62,6 +430,7 @@ function StageProgressBar({
         const step = stepsMap[stage.key];
         const isCompleted = step?.status === "completed" || step?.status === "skipped";
         const isCurrent = stage.key === currentStage;
+        const isRunning = isCurrent && step?.status === "running";
         const isPast = idx < currentIdx;
         const isFuture = idx > currentIdx;
 
@@ -77,7 +446,9 @@ function StageProgressBar({
                     : "border-border bg-muted/30 text-muted-foreground/50"
                 }`}
               >
-                {isCompleted || isPast ? (
+                {isRunning ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : isCompleted || isPast ? (
                   <CheckCircle2 className="w-4 h-4" />
                 ) : isCurrent ? (
                   <span className="text-xs font-bold">{idx + 1}</span>
@@ -87,22 +458,14 @@ function StageProgressBar({
               </div>
               <span
                 className={`text-xs whitespace-nowrap ${
-                  isCurrent
-                    ? "text-primary font-medium"
-                    : isFuture
-                    ? "text-muted-foreground/50"
-                    : "text-muted-foreground"
+                  isCurrent ? "text-primary font-medium" : isFuture ? "text-muted-foreground/50" : "text-muted-foreground"
                 }`}
               >
                 {stage.label}
               </span>
             </div>
             {idx < STAGES.length - 1 && (
-              <div
-                className={`h-0.5 w-6 mb-4 flex-shrink-0 ${
-                  idx < currentIdx ? "bg-green-500/50" : "bg-border"
-                }`}
-              />
+              <div className={`h-0.5 w-6 mb-4 flex-shrink-0 ${idx < currentIdx ? "bg-green-500/50" : "bg-border"}`} />
             )}
           </div>
         );
@@ -111,7 +474,9 @@ function StageProgressBar({
   );
 }
 
-/** 当前阶段面板 */
+// ─────────────────────────────────────────────
+// Current Stage Panel
+// ─────────────────────────────────────────────
 function CurrentStagePanel({
   article,
   steps,
@@ -122,9 +487,10 @@ function CurrentStagePanel({
   onRefresh: () => void;
 }) {
   const [advancing, setAdvancing] = useState(false);
+  const [executing, setExecuting] = useState(false);
   const [decision, setDecision] = useState("");
 
-  const currentStage = article.currentStage || article.current_stage || "topic";
+  const currentStage = article.currentStage || "topic";
   const stageInfo = STAGES.find((s) => s.key === currentStage);
   const currentStep = steps.find((s) => s.stage === currentStage);
   const stepStatus = currentStep?.status || "pending";
@@ -132,31 +498,78 @@ function CurrentStagePanel({
 
   const isLastStage = currentStage === "ready";
   const isCompleted = article.status === "completed";
+  const isRunning = stepStatus === "running";
+  const isWaiting = stepStatus === "waiting_decision";
+  const isFailed = stepStatus === "failed";
 
-  const safeJson = (str: string | null | undefined) => {
-    if (!str || str === "{}") return null;
-    try { return JSON.parse(str); } catch { return null; }
-  };
-
-  const inputData = safeJson(currentStep?.input);
   const outputData = safeJson(currentStep?.output);
+
+  // Stage-specific decision state
+  const [selectedAngle, setSelectedAngle] = useState("");
+  const [editedSkeleton, setEditedSkeleton] = useState("");
+  const [editedDraft, setEditedDraft] = useState("");
+  const [selectedCover, setSelectedCover] = useState("");
+
+  // Reset state when stage changes
+  const prevStageRef = useRef(currentStage);
+  useEffect(() => {
+    if (prevStageRef.current !== currentStage) {
+      setSelectedAngle("");
+      setEditedSkeleton("");
+      setEditedDraft("");
+      setSelectedCover("");
+      setDecision("");
+      prevStageRef.current = currentStage;
+    }
+  }, [currentStage]);
+
+  /** 构建 decision 字符串 */
+  const buildDecision = (): string | undefined => {
+    if (currentStage === "topic" && selectedAngle) return selectedAngle;
+    if (currentStage === "skeleton" && editedSkeleton) return editedSkeleton;
+    if (currentStage === "draft" && editedDraft) return editedDraft;
+    if (currentStage === "cover" && selectedCover) return selectedCover;
+    if (decision.trim()) return decision.trim();
+    return undefined;
+  };
 
   const handleAdvance = useCallback(async () => {
     setAdvancing(true);
     try {
       await apiFetch(`/api/articles/${article.id}/advance`, {
         method: "POST",
-        body: JSON.stringify({ decision: decision.trim() || undefined }),
+        body: JSON.stringify({ decision: buildDecision() }),
       });
-      toast.success(isLastStage ? "文章已完成！" : "已推进到下一阶段");
+      toast.success(isLastStage ? "文章已完成！" : "已确认，正在开始下一阶段...");
       setDecision("");
+      setSelectedAngle("");
+      setEditedSkeleton("");
+      setEditedDraft("");
+      setSelectedCover("");
       onRefresh();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "操作失败");
     } finally {
       setAdvancing(false);
     }
-  }, [article.id, decision, isLastStage, onRefresh]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [article.id, isLastStage, onRefresh, currentStage, selectedAngle, editedSkeleton, editedDraft, selectedCover, decision]);
+
+  const handleRetry = useCallback(async () => {
+    setExecuting(true);
+    try {
+      await apiFetch(`/api/articles/${article.id}/execute`, {
+        method: "POST",
+        body: JSON.stringify({ stage: currentStage }),
+      });
+      toast.success("已重新触发执行");
+      onRefresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "触发失败");
+    } finally {
+      setExecuting(false);
+    }
+  }, [article.id, currentStage, onRefresh]);
 
   if (isCompleted) {
     return (
@@ -178,91 +591,143 @@ function CurrentStagePanel({
             <span>{stageInfo?.icon}</span>
             当前阶段：{stageInfo?.label}
           </CardTitle>
-          <Badge
-            variant="outline"
-            className={`text-xs flex items-center gap-1 border ${stepConfig.color}`}
-          >
-            <span className={`w-1.5 h-1.5 rounded-full ${stepConfig.dot}`} />
-            {stepConfig.label}
-          </Badge>
+          <div className="flex items-center gap-2">
+            <Badge
+              variant="outline"
+              className={`text-xs flex items-center gap-1 border ${stepConfig.color}`}
+            >
+              {isRunning && <Loader2 className="w-3 h-3 animate-spin" />}
+              {!isRunning && <span className={`w-1.5 h-1.5 rounded-full ${stepConfig.dot}`} />}
+              {stepConfig.label}
+            </Badge>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        {/* 输入内容 */}
-        {inputData && (
-          <div>
-            <p className="text-xs text-muted-foreground mb-1.5 font-medium">阶段输入</p>
-            <pre className="text-xs bg-muted/30 rounded-md p-3 overflow-auto max-h-32 text-foreground/80">
-              {JSON.stringify(inputData, null, 2)}
-            </pre>
+        {/* Running 状态 */}
+        {isRunning && (
+          <div className="flex flex-col items-center py-8 gap-3">
+            <Loader2 className="w-8 h-8 animate-spin text-primary" />
+            <p className="text-sm text-muted-foreground">AI 正在生成{stageInfo?.label}内容，请稍候...</p>
+            <p className="text-xs text-muted-foreground/60">页面每2秒自动刷新</p>
           </div>
         )}
 
-        {/* 输出内容 */}
-        {outputData && (
-          <div>
-            <p className="text-xs text-muted-foreground mb-1.5 font-medium">阶段输出</p>
-            <pre className="text-xs bg-muted/30 rounded-md p-3 overflow-auto max-h-48 text-foreground/80">
-              {JSON.stringify(outputData, null, 2)}
-            </pre>
+        {/* Failed 状态 */}
+        {isFailed && (
+          <div className="space-y-3">
+            <div className="rounded-lg bg-red-500/10 border border-red-500/20 p-3">
+              <p className="text-sm font-medium text-red-400 mb-1">执行失败</p>
+              <p className="text-xs text-foreground/70">{currentStep?.error || "未知错误"}</p>
+            </div>
+            <Button
+              variant="outline"
+              onClick={handleRetry}
+              disabled={executing}
+              className="w-full"
+            >
+              {executing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
+              重新执行
+            </Button>
           </div>
         )}
 
-        {/* 已有决策 */}
-        {currentStep?.decision && (
-          <div>
-            <p className="text-xs text-muted-foreground mb-1.5 font-medium">决策记录</p>
-            <p className="text-sm bg-green-500/10 border border-green-500/20 rounded-md p-3 text-green-400">
-              {currentStep.decision}
-            </p>
+        {/* Waiting Decision - 各阶段输出展示 */}
+        {isWaiting && outputData && (
+          <>
+            {currentStage === "topic" && (
+              <TopicOutput
+                output={outputData}
+                onSelect={setSelectedAngle}
+                selectedAngle={selectedAngle}
+              />
+            )}
+            {currentStage === "material" && (
+              <MaterialOutput output={outputData} />
+            )}
+            {currentStage === "skeleton" && (
+              <SkeletonOutput
+                output={outputData}
+                editedSkeleton={editedSkeleton}
+                onEdit={setEditedSkeleton}
+              />
+            )}
+            {currentStage === "draft" && (
+              <DraftOutput
+                output={outputData}
+                editedDraft={editedDraft}
+                onEdit={setEditedDraft}
+              />
+            )}
+            {currentStage === "layout" && (
+              <LayoutOutput output={outputData} />
+            )}
+            {currentStage === "cover" && (
+              <CoverOutput
+                output={outputData}
+                selectedCover={selectedCover}
+                onSelect={setSelectedCover}
+              />
+            )}
+            {currentStage === "ready" && (
+              <ReadyOutput output={outputData} article={article} />
+            )}
+
+            {/* material / layout 阶段通用备注 */}
+            {(currentStage === "material" || currentStage === "layout") && (
+              <div>
+                <Label className="text-xs text-muted-foreground">备注（可选）：</Label>
+                <Textarea
+                  value={decision}
+                  onChange={(e) => setDecision(e.target.value)}
+                  placeholder="添加备注或说明..."
+                  className="mt-1.5 text-sm"
+                  rows={2}
+                />
+              </div>
+            )}
+          </>
+        )}
+
+        {/* Pending 状态 */}
+        {stepStatus === "pending" && (
+          <div className="py-6 text-center">
+            <p className="text-sm text-muted-foreground">等待上一阶段完成后自动开始</p>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleRetry}
+              disabled={executing}
+              className="mt-3"
+            >
+              {executing ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : null}
+              手动触发执行
+            </Button>
           </div>
         )}
 
-        {/* waiting_decision 时显示决策输入框 */}
-        {stepStatus === "waiting_decision" && !currentStep?.decision && (
-          <div>
-            <Label className="text-xs text-muted-foreground">
-              请确认或修改本阶段内容
-            </Label>
-            <Textarea
-              value={decision}
-              onChange={(e) => setDecision(e.target.value)}
-              placeholder="输入你的决策或修改意见..."
-              className="mt-1.5 text-sm"
-              rows={3}
-            />
+        {/* 已有决策记录 */}
+        {currentStep?.decision && isWaiting && (
+          <div className="rounded-md bg-green-500/10 border border-green-500/20 p-3">
+            <p className="text-xs text-green-400 font-medium mb-1">已记录决策</p>
+            <p className="text-sm text-foreground/80">{currentStep.decision}</p>
           </div>
         )}
 
-        {/* 决策备注（running时可选填）*/}
-        {stepStatus === "running" && (
-          <div>
-            <Label className="text-xs text-muted-foreground">
-              推进备注（可选）
-            </Label>
-            <Textarea
-              value={decision}
-              onChange={(e) => setDecision(e.target.value)}
-              placeholder="填写此阶段的备注或决策..."
-              className="mt-1.5 text-sm"
-              rows={2}
-            />
-          </div>
-        )}
-
-        {/* 推进按钮 */}
-        {!isCompleted && stepStatus !== "pending" && (
+        {/* 确认推进按钮 */}
+        {(isWaiting || (stepStatus === "completed" && !isCompleted)) && (
           <Button
             onClick={handleAdvance}
             disabled={advancing}
             className="w-full bg-primary hover:bg-primary/90"
           >
-            <ArrowRight className="w-4 h-4 mr-2" />
-            {advancing
-              ? "处理中..."
-              : isLastStage
-              ? "完成全部流程"
-              : `推进到下一步`}
+            {advancing ? (
+              <><Loader2 className="w-4 h-4 mr-2 animate-spin" />处理中...</>
+            ) : isLastStage ? (
+              "✅ 完成全部流程"
+            ) : (
+              `确认${stageInfo?.label} → 开始${STAGES[STAGES.findIndex((s) => s.key === currentStage) + 1]?.label || "下一步"}`
+            )}
           </Button>
         )}
       </CardContent>
@@ -270,7 +735,9 @@ function CurrentStagePanel({
   );
 }
 
-/** 历史阶段折叠面板 */
+// ─────────────────────────────────────────────
+// Stage History Panel
+// ─────────────────────────────────────────────
 function StepHistoryPanel({ steps }: { steps: AnyRecord[] }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
@@ -297,14 +764,8 @@ function StepHistoryPanel({ steps }: { steps: AnyRecord[] }) {
           const config = STEP_STATUS_CONFIG[status] || STEP_STATUS_CONFIG.pending;
           const isOpen = expanded.has(stage.key);
 
-          const safeJson = (str: string | null | undefined) => {
-            if (!str || str === "{}") return null;
-            try { return JSON.parse(str); } catch { return null; }
-          };
-
-          const inputData = safeJson(step?.input);
           const outputData = safeJson(step?.output);
-          const hasContent = inputData || outputData || step?.decision;
+          const hasContent = outputData || step?.decision || step?.error;
 
           return (
             <div key={stage.key} className="border border-border rounded-lg overflow-hidden">
@@ -326,39 +787,41 @@ function StepHistoryPanel({ steps }: { steps: AnyRecord[] }) {
                     variant="outline"
                     className={`text-xs flex items-center gap-1 border ${config.color}`}
                   >
-                    <span className={`w-1.5 h-1.5 rounded-full ${config.dot}`} />
+                    {status === "running" && <Loader2 className="w-2.5 h-2.5 animate-spin" />}
+                    {status !== "running" && <span className={`w-1.5 h-1.5 rounded-full ${config.dot}`} />}
                     {config.label}
                   </Badge>
                   {hasContent && (
-                    isOpen ? <ChevronDown className="w-4 h-4 text-muted-foreground" /> : <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                    isOpen
+                      ? <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                      : <ChevronRight className="w-4 h-4 text-muted-foreground" />
                   )}
                 </div>
               </button>
 
               {isOpen && hasContent && (
                 <div className="px-4 pb-4 space-y-3 border-t border-border pt-3">
-                  {inputData && (
+                  {step?.decision && (
                     <div>
-                      <p className="text-xs text-muted-foreground mb-1 font-medium">输入</p>
-                      <pre className="text-xs bg-muted/30 rounded-md p-2 overflow-auto max-h-24 text-foreground/70">
-                        {JSON.stringify(inputData, null, 2)}
-                      </pre>
+                      <p className="text-xs text-muted-foreground mb-1 font-medium">决策记录</p>
+                      <p className="text-sm text-green-400 bg-green-500/10 rounded-md p-2">
+                        {step.decision}
+                      </p>
                     </div>
                   )}
                   {outputData && (
                     <div>
-                      <p className="text-xs text-muted-foreground mb-1 font-medium">输出</p>
+                      <p className="text-xs text-muted-foreground mb-1 font-medium">阶段输出摘要</p>
                       <pre className="text-xs bg-muted/30 rounded-md p-2 overflow-auto max-h-32 text-foreground/70">
-                        {JSON.stringify(outputData, null, 2)}
+                        {JSON.stringify(outputData, null, 2).slice(0, 500)}
+                        {JSON.stringify(outputData, null, 2).length > 500 ? "\n...(已截断)" : ""}
                       </pre>
                     </div>
                   )}
-                  {step?.decision && (
+                  {step?.error && (
                     <div>
-                      <p className="text-xs text-muted-foreground mb-1 font-medium">决策</p>
-                      <p className="text-sm text-green-400 bg-green-500/10 rounded-md p-2">
-                        {step.decision}
-                      </p>
+                      <p className="text-xs text-red-400 mb-1 font-medium">错误信息</p>
+                      <p className="text-xs text-red-400/80 bg-red-500/10 rounded-md p-2">{step.error}</p>
                     </div>
                   )}
                 </div>
@@ -371,6 +834,9 @@ function StepHistoryPanel({ steps }: { steps: AnyRecord[] }) {
   );
 }
 
+// ─────────────────────────────────────────────
+// Main Page
+// ─────────────────────────────────────────────
 export default function PipelineDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
@@ -382,6 +848,19 @@ export default function PipelineDetailPage({ params }: { params: Promise<{ id: s
   const article = articleData;
   const steps: AnyRecord[] = article?.steps || [];
   const statusConfig = ARTICLE_STATUS_CONFIG[article?.status] || ARTICLE_STATUS_CONFIG.active;
+
+  // 轮询：当当前 step 是 running 时，每 2 秒刷新
+  const currentStage = article?.currentStage || "topic";
+  const currentStep = steps.find((s) => s.stage === currentStage);
+  const isCurrentRunning = currentStep?.status === "running";
+
+  useEffect(() => {
+    if (!isCurrentRunning) return;
+    const interval = setInterval(() => {
+      refresh();
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [isCurrentRunning, refresh]);
 
   const handleTitleEdit = () => {
     setTitleValue(article?.title || "");
@@ -406,7 +885,7 @@ export default function PipelineDetailPage({ params }: { params: Promise<{ id: s
     }
   }, [id, titleValue, refresh]);
 
-  if (loading) {
+  if (loading && !articleData) {
     return (
       <div className="space-y-4">
         <SkeletonCard />
@@ -429,7 +908,7 @@ export default function PipelineDetailPage({ params }: { params: Promise<{ id: s
 
   return (
     <div className="space-y-6">
-      {/* 自定义页头（支持可编辑标题） */}
+      {/* 页头 */}
       <div className="flex items-start justify-between gap-4 mb-6">
         <div className="flex-1 min-w-0">
           {editingTitle ? (
@@ -468,6 +947,12 @@ export default function PipelineDetailPage({ params }: { params: Promise<{ id: s
             <Badge variant="outline" className={`text-xs border ${statusConfig.color}`}>
               {statusConfig.label}
             </Badge>
+            {isCurrentRunning && (
+              <span className="text-xs text-blue-400 flex items-center gap-1">
+                <Loader2 className="w-3 h-3 animate-spin" />
+                AI 生成中...
+              </span>
+            )}
             <span className="text-sm text-muted-foreground">
               创建于 {new Date(article.createdAt || article.created_at).toLocaleDateString("zh-CN", {
                 year: "numeric",
@@ -486,7 +971,7 @@ export default function PipelineDetailPage({ params }: { params: Promise<{ id: s
       <Card>
         <CardContent className="pt-5 pb-4">
           <StageProgressBar
-            currentStage={article.currentStage || article.current_stage || "topic"}
+            currentStage={currentStage}
             steps={steps}
           />
         </CardContent>

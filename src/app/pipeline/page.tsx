@@ -45,11 +45,11 @@ const STAGES = [
 ] as const;
 
 const STEP_STATUS_CONFIG: Record<string, { label: string; color: string; dot: string }> = {
-  running:          { label: "处理中",   color: "bg-blue-500/15 text-blue-400 border-blue-500/30",   dot: "bg-blue-400" },
-  waiting_decision: { label: "等待决策", color: "bg-orange-500/15 text-orange-400 border-orange-500/30", dot: "bg-orange-400" },
+  running:          { label: "AI生成中", color: "bg-blue-500/15 text-blue-400 border-blue-500/30",   dot: "bg-blue-400" },
+  waiting_decision: { label: "等待确认", color: "bg-orange-500/15 text-orange-400 border-orange-500/30", dot: "bg-orange-400" },
   completed:        { label: "已完成",   color: "bg-green-500/15 text-green-400 border-green-500/30",  dot: "bg-green-400" },
   pending:          { label: "待开始",   color: "bg-muted/60 text-muted-foreground border-border",    dot: "bg-muted-foreground/40" },
-  failed:           { label: "失败",     color: "bg-red-500/15 text-red-400 border-red-500/30",      dot: "bg-red-400" },
+  failed:           { label: "执行失败", color: "bg-red-500/15 text-red-400 border-red-500/30",      dot: "bg-red-400" },
   skipped:          { label: "已跳过",   color: "bg-muted/60 text-muted-foreground border-border",    dot: "bg-muted-foreground/40" },
 };
 

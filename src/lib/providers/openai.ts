@@ -14,8 +14,6 @@ export class OpenAIProvider implements ModelProvider {
   }
 
   async generate(prompt: string, options?: GenerateOptions): Promise<string> {
-    const url = `${this.config.baseUrl.replace(/\/$/, "")}/chat/completions`;
-
     const messages: Array<{ role: string; content: string }> = [];
 
     // 添加系统提示词
@@ -25,18 +23,47 @@ export class OpenAIProvider implements ModelProvider {
 
     messages.push({ role: "user", content: prompt });
 
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
+    // 代理模式：如果配置了 LLM_PROXY_URL，走 Cloudflare Worker 代理
+    const proxyUrl = process.env.LLM_PROXY_URL;
+    const proxyKey = process.env.LLM_PROXY_KEY;
+
+    let url: string;
+    let headers: Record<string, string>;
+    let bodyPayload: Record<string, unknown>;
+
+    if (proxyUrl) {
+      url = proxyUrl;
+      headers = {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${this.config.apiKey}`,
-      },
-      body: JSON.stringify({
+        "X-Proxy-Key": proxyKey || "",
+      };
+      bodyPayload = {
+        baseUrl: this.config.baseUrl.replace(/\/$/, ""),
+        apiKey: this.config.apiKey,
         model: this.config.model,
         messages,
         temperature: options?.temperature ?? 0.7,
         max_tokens: options?.maxTokens ?? 4096,
-      }),
+      };
+    } else {
+      // 直连模式（本地开发或未配置代理时）
+      url = `${this.config.baseUrl.replace(/\/$/, "")}/chat/completions`;
+      headers = {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.config.apiKey}`,
+      };
+      bodyPayload = {
+        model: this.config.model,
+        messages,
+        temperature: options?.temperature ?? 0.7,
+        max_tokens: options?.maxTokens ?? 4096,
+      };
+    }
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(bodyPayload),
     });
 
     if (!response.ok) {

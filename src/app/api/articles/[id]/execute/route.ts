@@ -1,14 +1,12 @@
 /**
- * 推进文章到下一阶段
- * POST /api/articles/:id/advance
- * body: { decision?: string, skipTo?: string }
+ * Pipeline 阶段执行 API
+ * POST /api/articles/:id/execute
+ * body: { stage: string }
  *
- * 逻辑：
- * 1. 把当前stage的step标为completed，记录decision和completedAt
- * 2. 确定下一个stage（顺序或skipTo）
- * 3. 把下一个stage的step标为pending（execute API会置为running）
- * 4. 更新article的currentStage
- * 5. 自动触发下一阶段的execute（内部调用执行逻辑）
+ * 后台任务模式：
+ * 1. 立即把 step.status = "running"
+ * 2. 返回 { status: "running" }
+ * 3. 异步调 LLM → 写 output → status = "waiting_decision"
  */
 import { NextRequest } from "next/server";
 import { getDb } from "@/lib/db";
@@ -62,7 +60,7 @@ async function updateStep(
     .where(and(eq(articleSteps.articleId, articleId), eq(articleSteps.stage, stage as Stage)));
 }
 
-/** 后台异步执行某个阶段 */
+/** 核心执行逻辑，在后台异步运行 */
 async function runStageExecution(articleId: string, stage: Stage) {
   const db = getDb();
   if (!db) return;
@@ -70,6 +68,7 @@ async function runStageExecution(articleId: string, stage: Stage) {
   const now = () => new Date().toISOString();
 
   try {
+    // 获取文章信息
     const articleRows = await db.select().from(articles).where(eq(articles.id, articleId));
     if (!articleRows.length) throw new Error("文章不存在");
     const article = articleRows[0];
@@ -81,6 +80,7 @@ async function runStageExecution(articleId: string, stage: Stage) {
 
     let outputData: unknown = {};
 
+    // ─── topic 阶段 ───────────────────────────────────────
     if (stage === "topic") {
       const prompt = buildTopicAnalysisPrompt({
         title: articleTitle,
@@ -92,9 +92,15 @@ async function runStageExecution(articleId: string, stage: Stage) {
         maxTokens: 2000,
       });
       outputData = parseLLMJson(raw);
-    } else if (stage === "material") {
+    }
+
+    // ─── material 阶段 ────────────────────────────────────
+    else if (stage === "material") {
+      // 获取 topic 阶段的决策（用户选的角度）
       const topicStep = await getStep(db, articleId, "topic");
       let angle = topicStep?.decision || "";
+
+      // 如果没有用户决策，取 output 的第一个角度
       if (!angle) {
         const topicOutput = safeJson<{ angles: Array<{ name: string; description: string }> }>(
           topicStep?.output
@@ -104,25 +110,37 @@ async function runStageExecution(articleId: string, stage: Stage) {
           angle = `${first.name}：${first.description}`;
         }
       }
+
+      // 从素材库模糊搜索相关素材（取前10条）
       const titleWords = articleTitle.split(/[\s，,。、]+/).filter(Boolean).slice(0, 3);
       const matchedMaterials: typeof materials.$inferSelect[] = [];
+
       for (const word of titleWords) {
         if (word.length < 2) continue;
         const rows = await db
           .select()
           .from(materials)
-          .where(or(like(materials.content, `%${word}%`), like(materials.tags, `%${word}%`)))
+          .where(
+            or(
+              like(materials.content, `%${word}%`),
+              like(materials.tags, `%${word}%`)
+            )
+          )
           .limit(5);
         for (const r of rows) {
-          if (!matchedMaterials.find((m) => m.id === r.id)) matchedMaterials.push(r);
+          if (!matchedMaterials.find((m) => m.id === r.id)) {
+            matchedMaterials.push(r);
+          }
         }
       }
+
       const existingMaterials = matchedMaterials.slice(0, 10).map((m) => ({
         id: m.id,
         content: m.content,
         type: m.type,
         tags: m.tags || "[]",
       }));
+
       const prompt = buildMaterialSuggestionPrompt({
         title: articleTitle,
         angle: angle || articleTitle,
@@ -133,7 +151,11 @@ async function runStageExecution(articleId: string, stage: Stage) {
         temperature: 0.7,
         maxTokens: 2000,
       });
-      const parsed = parseLLMJson<{ usefulMaterials: unknown[]; suggestions: unknown[]; summary: string }>(raw);
+      const parsed = parseLLMJson<{
+        usefulMaterials: unknown[];
+        suggestions: unknown[];
+        summary: string;
+      }>(raw);
       outputData = {
         ...parsed,
         existingMaterials: existingMaterials.map((m) => ({
@@ -142,56 +164,86 @@ async function runStageExecution(articleId: string, stage: Stage) {
           type: m.type,
         })),
       };
-    } else if (stage === "skeleton") {
+    }
+
+    // ─── skeleton 阶段 ────────────────────────────────────
+    else if (stage === "skeleton") {
       const topicStep = await getStep(db, articleId, "topic");
       const materialStep = await getStep(db, articleId, "material");
+
       let angle = topicStep?.decision || "";
       if (!angle) {
-        const topicOutput = safeJson<{ angles: Array<{ name: string; description: string }> }>(topicStep?.output);
+        const topicOutput = safeJson<{ angles: Array<{ name: string; description: string }> }>(
+          topicStep?.output
+        );
         if (topicOutput?.angles?.length) {
           const first = topicOutput.angles[0];
           angle = `${first.name}：${first.description}`;
         }
       }
+
       let materialSummary = materialStep?.decision || "";
       if (!materialSummary) {
         const matOutput = safeJson<{ summary: string }>(materialStep?.output);
         materialSummary = matOutput?.summary || "";
       }
-      const prompt = buildSkeletonPrompt({ title: articleTitle, angle: angle || articleTitle, materialSummary });
+
+      const prompt = buildSkeletonPrompt({
+        title: articleTitle,
+        angle: angle || articleTitle,
+        materialSummary,
+      });
       const raw = await provider.generate(prompt, {
         systemPrompt: PIPELINE_SYSTEM_PROMPT,
         temperature: 0.8,
         maxTokens: 3000,
       });
       outputData = parseLLMJson(raw);
-    } else if (stage === "draft") {
+    }
+
+    // ─── draft 阶段 ───────────────────────────────────────
+    else if (stage === "draft") {
       const topicStep = await getStep(db, articleId, "topic");
       const materialStep = await getStep(db, articleId, "material");
       const skeletonStep = await getStep(db, articleId, "skeleton");
+
       let angle = topicStep?.decision || "";
       if (!angle) {
-        const topicOutput = safeJson<{ angles: Array<{ name: string; description: string }> }>(topicStep?.output);
+        const topicOutput = safeJson<{ angles: Array<{ name: string; description: string }> }>(
+          topicStep?.output
+        );
         if (topicOutput?.angles?.length) {
           const first = topicOutput.angles[0];
           angle = `${first.name}：${first.description}`;
         }
       }
+
+      // 骨架：优先用用户决策，否则用生成的
       let skeletonText = skeletonStep?.decision || "";
       if (!skeletonText) {
-        const skeletonOutput = safeJson<{ sections: Array<{ title: string; keyPoints: string[]; estimatedWords: number }>; writingTip: string }>(skeletonStep?.output);
+        const skeletonOutput = safeJson<{
+          sections: Array<{ title: string; keyPoints: string[]; estimatedWords: number }>;
+          writingTip: string;
+        }>(skeletonStep?.output);
         if (skeletonOutput?.sections) {
           skeletonText = skeletonOutput.sections
-            .map((s) => `## ${s.title}\n关键点：${s.keyPoints.join("；")}\n预估字数：${s.estimatedWords}`)
+            .map(
+              (s) =>
+                `## ${s.title}\n关键点：${s.keyPoints.join("；")}\n预估字数：${s.estimatedWords}`
+            )
             .join("\n\n");
-          if (skeletonOutput.writingTip) skeletonText += `\n\n写作提示：${skeletonOutput.writingTip}`;
+          if (skeletonOutput.writingTip) {
+            skeletonText += `\n\n写作提示：${skeletonOutput.writingTip}`;
+          }
         }
       }
+
       let materialSummary = materialStep?.decision || "";
       if (!materialSummary) {
         const matOutput = safeJson<{ summary: string }>(materialStep?.output);
         materialSummary = matOutput?.summary || "";
       }
+
       const prompt = buildDraftWritingPrompt({
         title: articleTitle,
         angle: angle || articleTitle,
@@ -208,33 +260,48 @@ async function runStageExecution(articleId: string, stage: Stage) {
         content: parsed.content || raw,
         wordCount: parsed.wordCount || (parsed.content || raw).length,
       };
-    } else if (stage === "layout") {
+    }
+
+    // ─── layout 阶段 ──────────────────────────────────────
+    else if (stage === "layout") {
       const draftStep = await getStep(db, articleId, "draft");
       const draftOutput = safeJson<{ content: string; wordCount: number }>(draftStep?.output);
       const content = draftStep?.decision || draftOutput?.content || "";
+      const wordCount = draftOutput?.wordCount || content.length;
+
       outputData = {
         content,
-        wordCount: draftOutput?.wordCount || content.length,
+        wordCount,
         layoutNote: "排版需要在排版编辑器中完成。请复制上方内容，前往 wechat-layout.hiloki.ai 进行排版。",
         layoutUrl: "https://wechat-layout.hiloki.ai",
       };
-    } else if (stage === "cover") {
+    }
+
+    // ─── cover 阶段 ───────────────────────────────────────
+    else if (stage === "cover") {
       const topicStep = await getStep(db, articleId, "topic");
       const draftStep = await getStep(db, articleId, "draft");
+
       let angle = topicStep?.decision || "";
       if (!angle) {
-        const topicOutput = safeJson<{ angles: Array<{ name: string; description: string }> }>(topicStep?.output);
+        const topicOutput = safeJson<{ angles: Array<{ name: string; description: string }> }>(
+          topicStep?.output
+        );
         if (topicOutput?.angles?.length) {
           const first = topicOutput.angles[0];
           angle = `${first.name}：${first.description}`;
         }
       }
+
       const draftOutput = safeJson<{ content: string }>(draftStep?.output);
       const draftContent = draftStep?.decision || draftOutput?.content || "";
+      // 取前500字作为摘要
+      const draftSummary = draftContent.slice(0, 500);
+
       const prompt = buildCoverDesignPrompt({
         title: articleTitle,
         angle: angle || articleTitle,
-        draftSummary: draftContent.slice(0, 500),
+        draftSummary,
       });
       const raw = await provider.generate(prompt, {
         systemPrompt: PIPELINE_SYSTEM_PROMPT,
@@ -242,11 +309,17 @@ async function runStageExecution(articleId: string, stage: Stage) {
         maxTokens: 2000,
       });
       outputData = parseLLMJson(raw);
-    } else if (stage === "ready") {
+    }
+
+    // ─── ready 阶段 ───────────────────────────────────────
+    else if (stage === "ready") {
       const draftStep = await getStep(db, articleId, "draft");
       const coverStep = await getStep(db, articleId, "cover");
       const draftOutput = safeJson<{ content: string; wordCount: number }>(draftStep?.output);
-      const coverOutput = safeJson<{ titleOptions: unknown[]; visualDescription: string }>(coverStep?.output);
+      const coverOutput = safeJson<{ titleOptions: unknown[]; visualDescription: string }>(
+        coverStep?.output
+      );
+
       outputData = {
         summary: "文章已完成全部制作流程，准备发布",
         finalTitle: articleTitle,
@@ -257,17 +330,29 @@ async function runStageExecution(articleId: string, stage: Stage) {
       };
     }
 
+    // 写结果
     await updateStep(db, articleId, stage, {
       output: JSON.stringify(outputData),
       status: "waiting_decision",
       completedAt: now(),
     });
-    await db.update(articles).set({ updatedAt: now() }).where(eq(articles.id, articleId));
+
+    // 更新 article updatedAt
+    await db
+      .update(articles)
+      .set({ updatedAt: now() })
+      .where(eq(articles.id, articleId));
   } catch (error) {
-    console.error(`[Pipeline Advance/Execute] stage=${stage} articleId=${articleId}`, error);
+    console.error(`[Pipeline Execute] stage=${stage} articleId=${articleId}`, error);
     const errMsg = error instanceof Error ? error.message : String(error);
-    await updateStep(db, articleId, stage, { status: "failed", error: errMsg });
-    await db.update(articles).set({ updatedAt: now() }).where(eq(articles.id, articleId));
+    await updateStep(db, articleId, stage, {
+      status: "failed",
+      error: errMsg,
+    });
+    await db
+      .update(articles)
+      .set({ updatedAt: now() })
+      .where(eq(articles.id, articleId));
   }
 }
 
@@ -279,67 +364,39 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
   try {
     const body = await request.json().catch(() => ({}));
-    const { decision, skipTo } = body as { decision?: string; skipTo?: string };
+    const { stage } = body as { stage?: string };
 
-    const articleRows = await db.select().from(articles).where(eq(articles.id, id));
-    if (articleRows.length === 0) return err("文章不存在", 404);
-    const article = articleRows[0];
-
-    const currentStage = article.currentStage as Stage;
-    const currentIndex = STAGE_ORDER.indexOf(currentStage);
-    if (currentIndex === -1) return err("当前阶段无效", 400);
-
-    let nextStage: Stage | null = null;
-    if (skipTo && STAGE_ORDER.includes(skipTo as Stage)) {
-      nextStage = skipTo as Stage;
-    } else {
-      nextStage = currentIndex < STAGE_ORDER.length - 1 ? STAGE_ORDER[currentIndex + 1] : null;
+    if (!stage || !STAGE_ORDER.includes(stage as Stage)) {
+      return err(`无效的阶段: ${stage}`, 400);
     }
+
+    const targetStage = stage as Stage;
+
+    // 验证文章存在
+    const articleRows = await db.select().from(articles).where(eq(articles.id, id));
+    if (!articleRows.length) return err("文章不存在", 404);
 
     const now = new Date().toISOString();
 
-    // 把当前step标为completed
-    const currentStepUpdates: Record<string, unknown> = {
-      status: "completed",
-      completedAt: now,
-    };
-    if (decision !== undefined) currentStepUpdates.decision = decision;
-
-    await db
-      .update(articleSteps)
-      .set(currentStepUpdates)
-      .where(and(eq(articleSteps.articleId, id), eq(articleSteps.stage, currentStage)));
-
-    if (nextStage) {
-      // 把下一步标为 running（由我们的 runStageExecution 接管）
-      await db
-        .update(articleSteps)
-        .set({ status: "running", startedAt: now, output: "{}", error: "" })
-        .where(and(eq(articleSteps.articleId, id), eq(articleSteps.stage, nextStage)));
-
-      await db
-        .update(articles)
-        .set({ currentStage: nextStage, updatedAt: now })
-        .where(eq(articles.id, id));
-
-      // 同步等待下一阶段执行（Vercel serverless 会杀掉 fire-and-forget）
-      await runStageExecution(id, nextStage);
-    } else {
-      await db
-        .update(articles)
-        .set({ status: "completed", updatedAt: now })
-        .where(eq(articles.id, id));
-    }
-
-    const updatedArticle = await db.select().from(articles).where(eq(articles.id, id));
-    const steps = await db.select().from(articleSteps).where(eq(articleSteps.articleId, id));
-
-    return ok({
-      article: updatedArticle[0],
-      steps,
-      advancedTo: nextStage,
+    // 把目标 step 标为 running
+    await updateStep(db, id, targetStage, {
+      status: "running",
+      startedAt: now,
+      output: "{}",
+      error: "",
     });
+
+    // 更新 article updatedAt
+    await db
+      .update(articles)
+      .set({ updatedAt: now })
+      .where(eq(articles.id, id));
+
+    // 同步等待执行完成（Vercel serverless 会杀掉 fire-and-forget 的异步任务）
+    await runStageExecution(id, targetStage);
+
+    return ok({ status: "completed", stage: targetStage });
   } catch (error) {
-    return err(`推进阶段失败: ${error}`, 500);
+    return err(`执行阶段失败: ${error}`, 500);
   }
 }
