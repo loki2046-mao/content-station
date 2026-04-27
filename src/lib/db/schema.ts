@@ -338,6 +338,43 @@ export const hotspotItems = sqliteTable("hotspot_items", {
   createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
 });
 
+// ============ 写作Pipeline ============
+
+// 文章主表
+export const articles = sqliteTable("articles", {
+  id: text("id").primaryKey(),
+  title: text("title").notNull(),
+  topicId: text("topic_id"), // 关联选题池，可空
+  currentStage: text("current_stage", {
+    enum: ["topic", "material", "skeleton", "draft", "layout", "cover", "ready", "published"],
+  }).default("topic"),
+  status: text("status", {
+    enum: ["active", "paused", "completed", "archived"],
+  }).default("active"),
+  metadata: text("metadata").default("{}"), // 灵活配置 JSON
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+  updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
+});
+
+// 阶段记录表
+export const articleSteps = sqliteTable("article_steps", {
+  id: text("id").primaryKey(),
+  articleId: text("article_id").notNull(),
+  stage: text("stage", {
+    enum: ["topic", "material", "skeleton", "draft", "layout", "cover", "ready"],
+  }).notNull(),
+  status: text("status", {
+    enum: ["pending", "running", "waiting_decision", "completed", "skipped", "failed"],
+  }).default("pending"),
+  input: text("input").default("{}"),
+  output: text("output").default("{}"),
+  decision: text("decision"),
+  error: text("error").default(""),
+  startedAt: text("started_at"),
+  completedAt: text("completed_at"),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+});
+
 // ============ 类型导出 ============
 export type Topic = typeof topics.$inferSelect;
 export type NewTopic = typeof topics.$inferInsert;
@@ -360,3 +397,7 @@ export type TopicSummary = typeof topicSummaries.$inferSelect;
 export type NewTopicSummary = typeof topicSummaries.$inferInsert;
 export type HotspotItem = typeof hotspotItems.$inferSelect;
 export type NewHotspotItem = typeof hotspotItems.$inferInsert;
+export type Article = typeof articles.$inferSelect;
+export type NewArticle = typeof articles.$inferInsert;
+export type ArticleStep = typeof articleSteps.$inferSelect;
+export type NewArticleStep = typeof articleSteps.$inferInsert;

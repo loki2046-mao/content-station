@@ -1,6 +1,6 @@
 /**
- * 公众号历史文章素材导入 API
- * POST /api/import/wechat
+ * Obsidian 笔记素材导入 API
+ * POST /api/import/obsidian
  * Body: { items: RawItem[], overwrite?: boolean }
  * Response: { inserted: number, total: number }
  */
@@ -19,7 +19,6 @@ type RawItem = {
   sourceType?: string;
   sourceId?: string;
   sourceTitle?: string;
-  publishDate?: string;
 };
 
 export async function POST(request: NextRequest) {
@@ -37,7 +36,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (overwrite) {
-      await db.delete(materials).where(eq(materials.sourceType, "wechat_article"));
+      await db.delete(materials).where(eq(materials.sourceType, "obsidian"));
     }
 
     const now = new Date().toISOString();
@@ -60,7 +59,7 @@ export async function POST(request: NextRequest) {
           | "prompt",
         tags: JSON.stringify(item.tags || []),
         topicIds: JSON.stringify([]),
-        sourceType: "wechat_article",
+        sourceType: "obsidian",
         sourceId: item.sourceId || "",
         createdAt: now,
       }));

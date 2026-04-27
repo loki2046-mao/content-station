@@ -16,6 +16,7 @@ import { Separator } from "@/components/ui/separator";
 const NAV_ITEMS = [
   { href: "/", label: "Dashboard", icon: "📊" },
   { href: "/topics", label: "选题池", icon: "📋" },
+  { href: "/pipeline", label: "Pipeline", icon: "🗂️" },
   { href: "/hotspots", label: "热点", icon: "🔥" },
   { href: "/topics-board", label: "推演板", icon: "🧩" },
   { href: "/analyze", label: "切口分析", icon: "🔍" },

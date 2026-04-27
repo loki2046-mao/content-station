@@ -1,6 +1,6 @@
 /**
  * 素材库 API
- * GET    /api/materials — 获取素材列表
+ * GET    /api/materials — 获取素材列表（支持分页：?page=1&pageSize=10）
  * POST   /api/materials — 新建素材
  * DELETE /api/materials?source=wechat_article — 按来源清空素材（不传source则清空全部）
  */
@@ -10,7 +10,7 @@ import { getDb } from "@/lib/db";
 import { materials } from "@/lib/db/schema";
 import { ensureDbInit } from "@/lib/db/ensure-init";
 import { ok, err, dbError } from "@/lib/api-helpers";
-import { desc, like, eq, and } from "drizzle-orm";
+import { desc, like, eq, and, count } from "drizzle-orm";
 
 export async function GET(request: NextRequest) {
   await ensureDbInit();
@@ -22,20 +22,56 @@ export async function GET(request: NextRequest) {
     const type = searchParams.get("type");
     const q = searchParams.get("q");
     const tag = searchParams.get("tag");
-    const limit = parseInt(searchParams.get("limit") || "50");
+    const page = Math.max(1, parseInt(searchParams.get("page") || "1"));
+    const pageSize = Math.max(1, parseInt(searchParams.get("pageSize") || "10"));
+    // legacy support: if explicit limit is passed, use it (no pagination)
+    const limitParam = searchParams.get("limit");
 
     const conditions = [];
     if (type) conditions.push(eq(materials.type, type as "opinion" | "quote" | "title_inspiration" | "example" | "opening" | "closing" | "title" | "angle" | "outline" | "general" | "prompt"));
     if (q) conditions.push(like(materials.content, `%${q}%`));
 
+    // Count total (before tag filter which is app-level)
+    let countQuery = db.select({ total: count() }).from(materials);
+    if (conditions.length > 0) {
+      countQuery = countQuery.where(and(...conditions)) as typeof countQuery;
+    }
+    const [{ total }] = await countQuery;
+
+    // If legacy limit param is provided, fall back to old behavior
+    if (limitParam !== null) {
+      const limit = parseInt(limitParam || "50");
+      let query = db.select().from(materials);
+      if (conditions.length > 0) {
+        query = query.where(and(...conditions)) as typeof query;
+      }
+      const rows = await query.orderBy(desc(materials.createdAt)).limit(limit);
+      let result = rows;
+      if (tag) {
+        result = rows.filter((r) => {
+          try {
+            const tags = JSON.parse(r.tags || "[]");
+            return tags.includes(tag);
+          } catch {
+            return false;
+          }
+        });
+      }
+      return ok(result);
+    }
+
+    // Paginated query
+    const offset = (page - 1) * pageSize;
     let query = db.select().from(materials);
     if (conditions.length > 0) {
       query = query.where(and(...conditions)) as typeof query;
     }
+    const rows = await query
+      .orderBy(desc(materials.createdAt))
+      .limit(pageSize)
+      .offset(offset);
 
-    const rows = await query.orderBy(desc(materials.createdAt)).limit(limit);
-
-    // 标签筛选在应用层
+    // Tag filter at app level
     let result = rows;
     if (tag) {
       result = rows.filter((r) => {
@@ -48,7 +84,15 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    return ok(result);
+    const totalPages = Math.ceil(total / pageSize);
+
+    return ok({
+      items: result,
+      total,
+      page,
+      pageSize,
+      totalPages,
+    });
   } catch (error) {
     return err(`获取素材列表失败: ${error}`, 500);
   }

@@ -36,6 +36,8 @@ import { toast } from "sonner";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyRecord = Record<string, any>;
 
+const PAGE_SIZE = 10;
+
 const TYPE_OPTIONS = [
   { value: "all", label: "全部类型" },
   { value: "opinion", label: "观点" },
@@ -56,9 +58,78 @@ const RATING_LABELS: Record<string, string> = {
   exceed: "🌟 超预期",
 };
 
+/** 页码导航，最多显示7个页码 */
+function Pagination({
+  page,
+  totalPages,
+  onPageChange,
+}: {
+  page: number;
+  totalPages: number;
+  onPageChange: (p: number) => void;
+}) {
+  if (totalPages <= 1) return null;
+
+  // Build visible page numbers (at most 7)
+  const pages: (number | "...")[] = [];
+  if (totalPages <= 7) {
+    for (let i = 1; i <= totalPages; i++) pages.push(i);
+  } else {
+    // always show first, last, current ±2, and ellipsis
+    const start = Math.max(2, page - 2);
+    const end = Math.min(totalPages - 1, page + 2);
+    pages.push(1);
+    if (start > 2) pages.push("...");
+    for (let i = start; i <= end; i++) pages.push(i);
+    if (end < totalPages - 1) pages.push("...");
+    pages.push(totalPages);
+  }
+
+  return (
+    <div className="flex items-center justify-center gap-1 mt-4 flex-wrap">
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={page <= 1}
+        onClick={() => onPageChange(page - 1)}
+        className="px-2"
+      >
+        ← 上一页
+      </Button>
+      {pages.map((p, i) =>
+        p === "..." ? (
+          <span key={`ellipsis-${i}`} className="px-2 text-muted-foreground text-sm">
+            …
+          </span>
+        ) : (
+          <Button
+            key={p}
+            variant={p === page ? "default" : "outline"}
+            size="sm"
+            onClick={() => onPageChange(p as number)}
+            className="min-w-[32px]"
+          >
+            {p}
+          </Button>
+        )
+      )}
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={page >= totalPages}
+        onClick={() => onPageChange(page + 1)}
+        className="px-2"
+      >
+        下一页 →
+      </Button>
+    </div>
+  );
+}
+
 export default function MaterialsPage() {
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
+  const [page, setPage] = useState(1);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editContent, setEditContent] = useState("");
@@ -68,15 +139,37 @@ export default function MaterialsPage() {
   const params = new URLSearchParams();
   if (search) params.set("q", search);
   if (typeFilter && typeFilter !== "all") params.set("type", typeFilter);
+  params.set("page", String(page));
+  params.set("pageSize", String(PAGE_SIZE));
   const queryStr = params.toString();
 
-  const { data: materialsList, loading, refresh } = useApiGet<AnyRecord[]>(
-    `/api/materials${queryStr ? `?${queryStr}` : ""}`
-  );
+  const { data: materialsData, loading, refresh } = useApiGet<{
+    items: AnyRecord[];
+    total: number;
+    page: number;
+    pageSize: number;
+    totalPages: number;
+  }>(`/api/materials?${queryStr}`);
+
+  const materialsList = materialsData?.items ?? [];
+  const totalPages = materialsData?.totalPages ?? 1;
+  const total = materialsData?.total ?? 0;
 
   // 测评素材
   const { data: evalMaterialsList, loading: evalLoading, refresh: refreshEvalMaterials } =
     useApiGet<AnyRecord[]>("/api/eval/content-materials?source_type=eval_result");
+
+  // 切换类型筛选时重置到第1页
+  const handleTypeChange = (v: string | null) => {
+    setTypeFilter(v || "all");
+    setPage(1);
+  };
+
+  // 搜索时重置到第1页
+  const handleSearchChange = (v: string) => {
+    setSearch(v);
+    setPage(1);
+  };
 
   // 新建素材
   const handleCreate = useCallback(
@@ -187,7 +280,7 @@ export default function MaterialsPage() {
       <Tabs defaultValue="general">
         <TabsList>
           <TabsTrigger value="general">
-            全部素材 {materialsList ? `(${materialsList.length})` : ""}
+            全部素材 {total > 0 ? `(${total})` : ""}
           </TabsTrigger>
           <TabsTrigger value="eval">
             测评素材 {evalMaterialsList ? `(${evalMaterialsList.length})` : ""}
@@ -201,10 +294,10 @@ export default function MaterialsPage() {
             <Input
               placeholder="搜索素材..."
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => handleSearchChange(e.target.value)}
               className="sm:max-w-xs"
             />
-            <Select value={typeFilter} onValueChange={(v) => setTypeFilter(v || "all")}>
+            <Select value={typeFilter} onValueChange={handleTypeChange}>
               <SelectTrigger className="sm:w-40">
                 <SelectValue placeholder="类型筛选" />
               </SelectTrigger>
@@ -230,55 +323,90 @@ export default function MaterialsPage() {
               description="点击右上角开始收集你的第一条素材"
             />
           ) : (
-            <div className="grid gap-3">
-              {materialsList.map((material) => (
-                <Card key={material.id} className="hover:border-primary/20 transition-colors">
-                  <CardContent className="pt-4 pb-4">
-                    {editingId === material.id ? (
-                      // 编辑模式
-                      <div className="space-y-3">
-                        <Select value={editType} onValueChange={(v) => setEditType(v || "opinion")}>
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {CREATE_TYPE_OPTIONS.map((opt) => (
-                              <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <Textarea
-                          value={editContent}
-                          onChange={(e) => setEditContent(e.target.value)}
-                          rows={4}
-                        />
-                        <div className="flex gap-2">
-                          <Button size="sm" onClick={saveEdit} className="bg-primary hover:bg-primary/90">保存</Button>
-                          <Button size="sm" variant="outline" onClick={() => setEditingId(null)}>取消</Button>
-                        </div>
-                      </div>
-                    ) : (
-                      // 展示模式
-                      <div className="flex items-start gap-3">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-2">
-                            <MaterialTypeBadge type={material.type} />
-                            <span className="text-xs text-muted-foreground">
-                              {new Date(material.createdAt || material.created_at).toLocaleDateString("zh-CN")}
-                            </span>
+            <>
+              <div className="grid gap-3">
+                {materialsList.map((material) => (
+                  <Card key={material.id} className="hover:border-primary/20 transition-colors">
+                    <CardContent className="pt-4 pb-4">
+                      {editingId === material.id ? (
+                        // 编辑模式
+                        <div className="space-y-3">
+                          <Select value={editType} onValueChange={(v) => setEditType(v || "opinion")}>
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {CREATE_TYPE_OPTIONS.map((opt) => (
+                                <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <Textarea
+                            value={editContent}
+                            onChange={(e) => setEditContent(e.target.value)}
+                            rows={4}
+                          />
+                          <div className="flex gap-2">
+                            <Button size="sm" onClick={saveEdit} className="bg-primary hover:bg-primary/90">保存</Button>
+                            <Button size="sm" variant="outline" onClick={() => setEditingId(null)}>取消</Button>
                           </div>
-                          <p className="text-sm whitespace-pre-wrap">{material.content}</p>
                         </div>
-                        <div className="flex gap-1 shrink-0">
-                          <Button variant="ghost" size="sm" onClick={() => startEdit(material)}>✏️</Button>
-                          <Button variant="ghost" size="sm" onClick={() => handleDelete(material.id)}>🗑️</Button>
+                      ) : (
+                        // 展示模式
+                        <div className="flex items-start gap-3">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-2">
+                              <MaterialTypeBadge type={material.type} />
+                              <span className="text-xs text-muted-foreground">
+                                {new Date(material.createdAt || material.created_at).toLocaleDateString("zh-CN")}
+                              </span>
+                              {material.sourceType && (
+                                <span className="text-xs text-muted-foreground/60">
+                                  {material.sourceType === "obsidian" ? "📓" : material.sourceType === "wechat_article" ? "📰" : ""}
+                                  {material.sourceTitle || ""}
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-sm whitespace-pre-wrap">{material.content}</p>
+                            {/* 查看原文链接 */}
+                            {material.sourceId && (
+                              <div className="mt-2">
+                                <a
+                                  href={material.sourceId}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-xs text-primary/70 hover:text-primary underline-offset-2 hover:underline"
+                                >
+                                  查看原文 →
+                                </a>
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex gap-1 shrink-0">
+                            <Button variant="ghost" size="sm" onClick={() => startEdit(material)}>✏️</Button>
+                            <Button variant="ghost" size="sm" onClick={() => handleDelete(material.id)}>🗑️</Button>
+                          </div>
                         </div>
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+
+              {/* 分页导航 */}
+              <Pagination
+                page={page}
+                totalPages={totalPages}
+                onPageChange={setPage}
+              />
+
+              {/* 分页信息 */}
+              {total > 0 && (
+                <p className="text-center text-xs text-muted-foreground">
+                  共 {total} 条，第 {page}/{totalPages} 页
+                </p>
+              )}
+            </>
           )}
         </TabsContent>
 

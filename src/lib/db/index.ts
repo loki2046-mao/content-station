@@ -310,6 +310,31 @@ export async function initDb() {
         fetched_at TEXT NOT NULL,
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
+
+      CREATE TABLE IF NOT EXISTS articles (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        topic_id TEXT,
+        current_stage TEXT DEFAULT 'topic',
+        status TEXT DEFAULT 'active',
+        metadata TEXT DEFAULT '{}',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS article_steps (
+        id TEXT PRIMARY KEY,
+        article_id TEXT NOT NULL,
+        stage TEXT NOT NULL,
+        status TEXT DEFAULT 'pending',
+        input TEXT DEFAULT '{}',
+        output TEXT DEFAULT '{}',
+        decision TEXT,
+        error TEXT DEFAULT '',
+        started_at TEXT,
+        completed_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
     `);
 
     // === 增量迁移：新增字段 ===
