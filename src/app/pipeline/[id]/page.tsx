@@ -1,6 +1,9 @@
 /**
  * 文章详情 / Pipeline 进度页
  * 带轮询、阶段产出展示、用户交互决策
+ *
+ * 架构：前端浏览器直接调阿里API（通过 Cloudflare Worker CORS代理）
+ * Worker URL: https://llm-proxy.lokimao0426.workers.dev
  */
 "use client";
 
@@ -25,6 +28,241 @@ import {
   RefreshCw,
   Pencil,
 } from "lucide-react";
+import {
+  PIPELINE_SYSTEM_PROMPT,
+  buildTopicAnalysisPrompt,
+  buildMaterialSuggestionPrompt,
+  buildSkeletonPrompt,
+  buildDraftWritingPrompt,
+  buildCoverDesignPrompt,
+  parseLLMJson,
+} from "@/lib/prompts/pipeline";
+
+// ─────────────────────────────────────────────
+// 客户端 LLM 调用（通过 Cloudflare Worker CORS代理）
+// ─────────────────────────────────────────────
+
+const PROXY_URL = "https://llm-proxy.lokimao0426.workers.dev";
+
+/** 从 settings 获取 LLM 配置并调用，通过 Worker 代理绕过 CORS */
+async function callLLM(
+  messages: Array<{ role: string; content: string }>,
+  options?: { temperature?: number; maxTokens?: number }
+): Promise<string> {
+  const settingsRes = await fetch("/api/settings");
+  const settingsData = await settingsRes.json();
+  const cfg = settingsData?.data?.settings ?? {};
+  const apiKey: string = cfg.api_key ?? cfg.apiKey ?? "";
+  const baseUrl: string = (cfg.base_url ?? cfg.baseUrl ?? "https://coding.dashscope.aliyuncs.com/v1").replace(/\/$/, "");
+  const model: string = cfg.default_model ?? cfg.defaultModel ?? "qwen-plus";
+
+  const res = await fetch(PROXY_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      targetUrl: `${baseUrl}/chat/completions`,
+      apiKey,
+      model,
+      messages,
+      temperature: options?.temperature ?? 0.7,
+      max_tokens: options?.maxTokens ?? 4000,
+    }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`LLM调用失败 (${res.status}): ${errText.slice(0, 200)}`);
+  }
+
+  const data = await res.json();
+  return (data.choices?.[0]?.message?.content as string) || "";
+}
+
+/** 更新 step 状态到数据库 */
+async function patchStep(
+  articleId: string,
+  stage: string,
+  update: { status: "running" | "waiting_decision" | "failed"; output?: string; error?: string }
+) {
+  await apiFetch(`/api/articles/${articleId}/steps/${stage}`, {
+    method: "PATCH",
+    body: JSON.stringify(update),
+  });
+}
+
+/** 安全解析 JSON 字符串（供客户端执行逻辑用） */
+function safeJsonLocal<T = AnyRecord>(str: string | null | undefined): T | null {
+  if (!str || str === "{}" || str === "null") return null;
+  try { return JSON.parse(str) as T; } catch { return null; }
+}
+
+/**
+ * 前端驱动的阶段执行：
+ * 1. PATCH step → running
+ * 2. 获取所有 steps 数据
+ * 3. 构建 prompt
+ * 4. 调 callLLM
+ * 5. PATCH step → waiting_decision + output
+ */
+async function runClientLLM(
+  articleId: string,
+  stage: string,
+  articleTitle: string,
+  articleMetadata: string,
+  steps: AnyRecord[]
+): Promise<void> {
+  const stepsMap = Object.fromEntries(steps.map((s: AnyRecord) => [s.stage, s]));
+  const metadata = safeJsonLocal<Record<string, string>>(articleMetadata) || {};
+
+  const systemMessages = [{ role: "system", content: PIPELINE_SYSTEM_PROMPT }];
+
+  let userPrompt = "";
+  let temperature = 0.7;
+  let maxTokens = 3000;
+  let outputData: unknown = {};
+
+  if (stage === "topic") {
+    userPrompt = buildTopicAnalysisPrompt({
+      title: articleTitle,
+      note: metadata.note || metadata.description || "",
+    });
+    temperature = 0.8;
+    maxTokens = 2000;
+  } else if (stage === "material") {
+    const topicStep = stepsMap["topic"];
+    let angle = topicStep?.decision || "";
+    if (!angle) {
+      const topicOutput = safeJsonLocal<{ angles: Array<{ name: string; description: string }> }>(topicStep?.output);
+      if (topicOutput?.angles?.length) {
+        angle = `${topicOutput.angles[0].name}：${topicOutput.angles[0].description}`;
+      }
+    }
+    userPrompt = buildMaterialSuggestionPrompt({
+      title: articleTitle,
+      angle: angle || articleTitle,
+      existingMaterials: [],
+    });
+    temperature = 0.7;
+    maxTokens = 2000;
+  } else if (stage === "skeleton") {
+    const topicStep = stepsMap["topic"];
+    const materialStep = stepsMap["material"];
+    let angle = topicStep?.decision || "";
+    if (!angle) {
+      const topicOutput = safeJsonLocal<{ angles: Array<{ name: string; description: string }> }>(topicStep?.output);
+      if (topicOutput?.angles?.length) {
+        angle = `${topicOutput.angles[0].name}：${topicOutput.angles[0].description}`;
+      }
+    }
+    let materialSummary = materialStep?.decision || "";
+    if (!materialSummary) {
+      const matOutput = safeJsonLocal<{ summary: string }>(materialStep?.output);
+      materialSummary = matOutput?.summary || "";
+    }
+    userPrompt = buildSkeletonPrompt({ title: articleTitle, angle: angle || articleTitle, materialSummary });
+    temperature = 0.8;
+    maxTokens = 3000;
+  } else if (stage === "draft") {
+    const topicStep = stepsMap["topic"];
+    const materialStep = stepsMap["material"];
+    const skeletonStep = stepsMap["skeleton"];
+    let angle = topicStep?.decision || "";
+    if (!angle) {
+      const topicOutput = safeJsonLocal<{ angles: Array<{ name: string; description: string }> }>(topicStep?.output);
+      if (topicOutput?.angles?.length) {
+        angle = `${topicOutput.angles[0].name}：${topicOutput.angles[0].description}`;
+      }
+    }
+    let skeletonText = skeletonStep?.decision || "";
+    if (!skeletonText) {
+      const skeletonOutput = safeJsonLocal<{ sections: Array<{ title: string; keyPoints: string[]; estimatedWords: number }>; writingTip: string }>(skeletonStep?.output);
+      if (skeletonOutput?.sections) {
+        skeletonText = skeletonOutput.sections
+          .map((s) => `## ${s.title}\n关键点：${s.keyPoints.join("；")}\n预估字数：${s.estimatedWords}`)
+          .join("\n\n");
+        if (skeletonOutput.writingTip) skeletonText += `\n\n写作提示：${skeletonOutput.writingTip}`;
+      }
+    }
+    let materialSummary = materialStep?.decision || "";
+    if (!materialSummary) {
+      const matOutput = safeJsonLocal<{ summary: string }>(materialStep?.output);
+      materialSummary = matOutput?.summary || "";
+    }
+    userPrompt = buildDraftWritingPrompt({
+      title: articleTitle,
+      angle: angle || articleTitle,
+      skeleton: skeletonText || "按照正常公众号文章结构写",
+      materialSummary,
+    });
+    temperature = 0.85;
+    maxTokens = 6000;
+  } else if (stage === "layout") {
+    const draftStep = stepsMap["draft"];
+    const draftOutput = safeJsonLocal<{ content: string; wordCount: number }>(draftStep?.output);
+    const content = draftStep?.decision || draftOutput?.content || "";
+    outputData = {
+      content,
+      wordCount: draftOutput?.wordCount || content.length,
+      layoutNote: "排版需要在排版编辑器中完成。请复制上方内容，前往 wechat-layout.hiloki.ai 进行排版。",
+      layoutUrl: "https://wechat-layout.hiloki.ai",
+    };
+    await patchStep(articleId, stage, { status: "waiting_decision", output: JSON.stringify(outputData) });
+    return;
+  } else if (stage === "cover") {
+    const topicStep = stepsMap["topic"];
+    const draftStep = stepsMap["draft"];
+    let angle = topicStep?.decision || "";
+    if (!angle) {
+      const topicOutput = safeJsonLocal<{ angles: Array<{ name: string; description: string }> }>(topicStep?.output);
+      if (topicOutput?.angles?.length) {
+        angle = `${topicOutput.angles[0].name}：${topicOutput.angles[0].description}`;
+      }
+    }
+    const draftOutput = safeJsonLocal<{ content: string }>(draftStep?.output);
+    const draftContent = draftStep?.decision || draftOutput?.content || "";
+    userPrompt = buildCoverDesignPrompt({
+      title: articleTitle,
+      angle: angle || articleTitle,
+      draftSummary: draftContent.slice(0, 500),
+    });
+    temperature = 0.8;
+    maxTokens = 2000;
+  } else if (stage === "ready") {
+    const draftStep = stepsMap["draft"];
+    const coverStep = stepsMap["cover"];
+    const draftOutput = safeJsonLocal<{ content: string; wordCount: number }>(draftStep?.output);
+    const coverOutput = safeJsonLocal<{ titleOptions: unknown[] }>(coverStep?.output);
+    outputData = {
+      summary: "文章已完成全部制作流程，准备发布",
+      finalTitle: articleTitle,
+      wordCount: draftOutput?.wordCount || 0,
+      hasDraft: !!draftOutput?.content,
+      hasCover: !!(coverOutput?.titleOptions?.length),
+      readyToPublish: true,
+    };
+    await patchStep(articleId, stage, { status: "waiting_decision", output: JSON.stringify(outputData) });
+    return;
+  }
+
+  // 调 LLM
+  const raw = await callLLM(
+    [...systemMessages, { role: "user", content: userPrompt }],
+    { temperature, maxTokens }
+  );
+
+  // 解析输出
+  if (stage === "draft") {
+    const parsed = parseLLMJson<{ content: string; wordCount: number }>(raw);
+    outputData = {
+      content: parsed.content || raw,
+      wordCount: parsed.wordCount || (parsed.content || raw).length,
+    };
+  } else {
+    outputData = parseLLMJson(raw);
+  }
+
+  await patchStep(articleId, stage, { status: "waiting_decision", output: JSON.stringify(outputData) });
+}
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyRecord = Record<string, any>;
@@ -488,6 +726,7 @@ function CurrentStagePanel({
 }) {
   const [advancing, setAdvancing] = useState(false);
   const [executing, setExecuting] = useState(false);
+  const [llmError, setLlmError] = useState("");
   const [decision, setDecision] = useState("");
 
   const currentStage = article.currentStage || "topic";
@@ -519,9 +758,36 @@ function CurrentStagePanel({
       setEditedDraft("");
       setSelectedCover("");
       setDecision("");
+      setLlmError("");
       prevStageRef.current = currentStage;
     }
   }, [currentStage]);
+
+  // 客户端 LLM 执行：当 step 是 running 时，直接从浏览器调阿里API
+  const llmTriggeredRef = useRef<string>("");
+  useEffect(() => {
+    const triggerKey = `${article.id}-${currentStage}`;
+    if (!isRunning || llmTriggeredRef.current === triggerKey) return;
+    llmTriggeredRef.current = triggerKey;
+
+    setLlmError("");
+    runClientLLM(article.id, currentStage, article.title, article.metadata || "{}", steps)
+      .then(() => {
+        onRefresh();
+      })
+      .catch(async (err) => {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        setLlmError(errMsg);
+        // 把失败状态写回数据库
+        try {
+          await patchStep(article.id, currentStage, { status: "failed", error: errMsg });
+        } catch {
+          // ignore
+        }
+        onRefresh();
+      });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [article.id, currentStage, isRunning]);
 
   /** 构建 decision 字符串 */
   const buildDecision = (): string | undefined => {
@@ -536,7 +802,7 @@ function CurrentStagePanel({
   const handleAdvance = useCallback(async () => {
     setAdvancing(true);
     try {
-      await apiFetch(`/api/articles/${article.id}/advance`, {
+      const res = await apiFetch(`/api/articles/${article.id}/advance`, {
         method: "POST",
         body: JSON.stringify({ decision: buildDecision() }),
       });
@@ -546,6 +812,14 @@ function CurrentStagePanel({
       setEditedSkeleton("");
       setEditedDraft("");
       setSelectedCover("");
+      setLlmError("");
+
+      // advance 成功后，重置触发key以便 useEffect 检测到新的 running 状态
+      const nextStage = (res as AnyRecord)?.data?.advancedTo;
+      if (nextStage) {
+        llmTriggeredRef.current = "";
+      }
+
       onRefresh();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "操作失败");
@@ -557,11 +831,12 @@ function CurrentStagePanel({
 
   const handleRetry = useCallback(async () => {
     setExecuting(true);
+    setLlmError("");
     try {
-      await apiFetch(`/api/articles/${article.id}/execute`, {
-        method: "POST",
-        body: JSON.stringify({ stage: currentStage }),
-      });
+      // 先设为 running
+      await patchStep(article.id, currentStage, { status: "running" });
+      // 重置触发key，让 useEffect 重新触发客户端执行
+      llmTriggeredRef.current = "";
       toast.success("已重新触发执行");
       onRefresh();
     } catch (e) {
@@ -609,7 +884,12 @@ function CurrentStagePanel({
           <div className="flex flex-col items-center py-8 gap-3">
             <Loader2 className="w-8 h-8 animate-spin text-primary" />
             <p className="text-sm text-muted-foreground">AI 正在生成{stageInfo?.label}内容，请稍候...</p>
-            <p className="text-xs text-muted-foreground/60">页面每2秒自动刷新</p>
+            <p className="text-xs text-muted-foreground/60">浏览器直接调用AI接口，约15-30秒</p>
+            {llmError && (
+              <div className="mt-2 rounded-lg bg-red-500/10 border border-red-500/20 p-3 w-full text-left">
+                <p className="text-xs text-red-400">{llmError}</p>
+              </div>
+            )}
           </div>
         )}
 
@@ -618,7 +898,7 @@ function CurrentStagePanel({
           <div className="space-y-3">
             <div className="rounded-lg bg-red-500/10 border border-red-500/20 p-3">
               <p className="text-sm font-medium text-red-400 mb-1">执行失败</p>
-              <p className="text-xs text-foreground/70">{currentStep?.error || "未知错误"}</p>
+              <p className="text-xs text-foreground/70">{currentStep?.error || llmError || "未知错误"}</p>
             </div>
             <Button
               variant="outline"
@@ -849,7 +1129,7 @@ export default function PipelineDetailPage({ params }: { params: Promise<{ id: s
   const steps: AnyRecord[] = article?.steps || [];
   const statusConfig = ARTICLE_STATUS_CONFIG[article?.status] || ARTICLE_STATUS_CONFIG.active;
 
-  // 轮询：当当前 step 是 running 时，每 2 秒刷新
+  // 轮询：前端LLM调用完成后会主动refresh，这里只作为保险
   const currentStage = article?.currentStage || "topic";
   const currentStep = steps.find((s) => s.stage === currentStage);
   const isCurrentRunning = currentStep?.status === "running";
@@ -858,7 +1138,7 @@ export default function PipelineDetailPage({ params }: { params: Promise<{ id: s
     if (!isCurrentRunning) return;
     const interval = setInterval(() => {
       refresh();
-    }, 2000);
+    }, 5000);
     return () => clearInterval(interval);
   }, [isCurrentRunning, refresh]);
 
