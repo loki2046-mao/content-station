@@ -27,6 +27,11 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // 放行：外部触发 API（内部自行校验 Bearer token）
+  if (pathname.startsWith("/api/external/")) {
+    return NextResponse.next();
+  }
+
   // 放行：Next.js 内部路由和静态资源
   if (
     pathname.startsWith("/_next/") ||

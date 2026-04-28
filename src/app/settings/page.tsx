@@ -142,6 +142,12 @@ export default function SettingsPage() {
   const [newTagColor, setNewTagColor] = useState("#B8623C");
   const [newTagCategory, setNewTagCategory] = useState("custom");
 
+  // API Key 管理
+  const [stationApiKey, setStationApiKey] = useState<string | null>(null);
+  const [stationApiKeyMasked, setStationApiKeyMasked] = useState<string | null>(null);
+  const [generatingKey, setGeneratingKey] = useState(false);
+  const [revokingKey, setRevokingKey] = useState(false);
+
   // 初始化表单
   useEffect(() => {
     if (settingsData?.settings) {
@@ -152,6 +158,55 @@ export default function SettingsPage() {
       if (s.default_model) setDefaultModel(s.default_model);
     }
   }, [settingsData]);
+
+  // 加载 API Key 状态
+  useEffect(() => {
+    apiFetch<AnyRecord>("/api/settings/api-key")
+      .then((res) => {
+        if (res.data?.maskedKey) {
+          setStationApiKeyMasked(res.data.maskedKey as string);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  // 生成新 API Key
+  const generateStationApiKey = async () => {
+    setGeneratingKey(true);
+    setStationApiKey(null);
+    try {
+      const res = await apiFetch<AnyRecord>("/api/settings/api-key", { method: "POST" });
+      const newKey = res.data?.apiKey as string;
+      setStationApiKey(newKey);
+      setStationApiKeyMasked(null); // 展示明文，刷新后才遮罩
+      toast.success("新 API Key 已生成，请立即复制保存！");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "生成失败");
+    } finally {
+      setGeneratingKey(false);
+    }
+  };
+
+  // 撤销 API Key
+  const revokeStationApiKey = async () => {
+    if (!confirm("确定要撤销 API Key？所有使用此 Key 的外部客户端将立即失效。")) return;
+    setRevokingKey(true);
+    try {
+      await apiFetch("/api/settings/api-key", { method: "DELETE" });
+      setStationApiKey(null);
+      setStationApiKeyMasked(null);
+      toast.success("API Key 已撤销");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "撤销失败");
+    } finally {
+      setRevokingKey(false);
+    }
+  };
+
+  // 复制 API Key
+  const copyApiKey = (key: string) => {
+    navigator.clipboard.writeText(key).then(() => toast.success("已复制到剪贴板")).catch(() => toast.error("复制失败"));
+  };
 
   // 当切换 provider 时同时更新 base URL 和默认模型
   const handleProviderChange = (value: string | null) => {
@@ -435,6 +490,66 @@ export default function SettingsPage() {
               </Select>
             </div>
             <Button onClick={addTag} className="bg-primary hover:bg-primary/90">添加</Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* API Key 管理 */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">🔑 外部 API Key</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            用于外部客户端（curl、iOS Shortcuts、AI Agent）通过 API 触发写作 Pipeline，无需浏览器登录。
+          </p>
+          <div className="text-xs text-muted-foreground bg-muted rounded p-3 font-mono break-all">
+            POST https://station.hiloki.ai/api/external/pipeline<br />
+            Authorization: Bearer &lt;api-key&gt;
+          </div>
+
+          {/* 显示当前 Key */}
+          {(stationApiKey || stationApiKeyMasked) && (
+            <div className="flex items-center gap-2">
+              <Input
+                readOnly
+                value={stationApiKey || stationApiKeyMasked || ""}
+                className="font-mono text-xs flex-1"
+              />
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => copyApiKey(stationApiKey || stationApiKeyMasked || "")}
+              >
+                复制
+              </Button>
+            </div>
+          )}
+          {stationApiKey && (
+            <p className="text-xs text-amber-600">⚠️ 请立即复制保存，此后将不再显示完整 Key。</p>
+          )}
+          {!stationApiKey && !stationApiKeyMasked && (
+            <p className="text-xs text-muted-foreground">当前没有有效的 API Key。</p>
+          )}
+
+          <div className="flex gap-2">
+            <Button
+              onClick={generateStationApiKey}
+              disabled={generatingKey}
+              className="bg-primary hover:bg-primary/90"
+            >
+              {generatingKey ? "生成中..." : stationApiKeyMasked ? "重新生成" : "生成 API Key"}
+            </Button>
+            {(stationApiKey || stationApiKeyMasked) && (
+              <Button
+                variant="outline"
+                onClick={revokeStationApiKey}
+                disabled={revokingKey}
+                className="text-destructive hover:text-destructive"
+              >
+                {revokingKey ? "撤销中..." : "撤销"}
+              </Button>
+            )}
           </div>
         </CardContent>
       </Card>
