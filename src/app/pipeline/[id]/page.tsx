@@ -42,7 +42,7 @@ import {
 // 客户端 LLM 调用（通过 Cloudflare Worker CORS代理）
 // ─────────────────────────────────────────────
 
-const PROXY_URL = "https://llm-proxy.lokimao0426.workers.dev";
+const PROXY_URL = "https://llm.hiloki.ai";
 
 /** 从 settings 获取 LLM 配置并调用，通过 Worker 代理绕过 CORS */
 async function callLLM(
@@ -54,7 +54,7 @@ async function callLLM(
   const cfg = settingsData?.data?.settings ?? {};
   const apiKey: string = cfg.api_key ?? cfg.apiKey ?? "";
   const baseUrl: string = (cfg.base_url ?? cfg.baseUrl ?? "https://coding.dashscope.aliyuncs.com/v1").replace(/\/$/, "");
-  const model: string = cfg.default_model ?? cfg.defaultModel ?? "qwen-plus";
+  const model: string = cfg.default_model ?? cfg.defaultModel ?? "qwen3.5-plus";
 
   const res = await fetch(PROXY_URL, {
     method: "POST",
