@@ -8,7 +8,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, use, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useApiGet, apiFetch } from "@/hooks/use-api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -27,6 +27,8 @@ import {
   ExternalLink,
   RefreshCw,
   Pencil,
+  Rocket,
+  Square,
 } from "lucide-react";
 import {
   PIPELINE_SYSTEM_PROMPT,
@@ -1115,15 +1117,111 @@ function StepHistoryPanel({ steps }: { steps: AnyRecord[] }) {
 }
 
 // ─────────────────────────────────────────────
+// Auto-Advance Panel
+// ─────────────────────────────────────────────
+function AutoAdvancePanel({
+  articleId,
+  running,
+  currentAutoStage,
+  error,
+  completedStages,
+  onStart,
+  onStop,
+}: {
+  articleId: string;
+  running: boolean;
+  currentAutoStage: string;
+  error: string;
+  completedStages: string[];
+  onStart: () => void;
+  onStop: () => void;
+}) {
+  const stageLabel = STAGES.find((s) => s.key === currentAutoStage)?.label || currentAutoStage;
+
+  return (
+    <Card>
+      <CardContent className="pt-5 pb-5">
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Rocket className="w-4 h-4 text-primary" />
+              <span className="text-sm font-medium">一键自动推进</span>
+            </div>
+            {!running ? (
+              <Button size="sm" onClick={onStart} className="bg-primary hover:bg-primary/90">
+                <Rocket className="w-3.5 h-3.5 mr-1.5" />
+                开始自动推进
+              </Button>
+            ) : (
+              <Button size="sm" variant="outline" onClick={onStop}>
+                <Square className="w-3.5 h-3.5 mr-1.5" />
+                停止
+              </Button>
+            )}
+          </div>
+
+          {running && (
+            <div className="rounded-lg bg-blue-500/10 border border-blue-500/20 p-3">
+              <div className="flex items-center gap-2 mb-2">
+                <Loader2 className="w-4 h-4 animate-spin text-blue-400" />
+                <span className="text-sm text-blue-400 font-medium">
+                  正在执行：{stageLabel}
+                </span>
+              </div>
+              <div className="flex items-center gap-1 flex-wrap">
+                {STAGES.map((stage) => {
+                  const isDone = completedStages.includes(stage.key);
+                  const isCurrent = stage.key === currentAutoStage;
+                  return (
+                    <div
+                      key={stage.key}
+                      className={`text-xs px-2 py-0.5 rounded-full border ${
+                        isDone
+                          ? "bg-green-500/15 text-green-400 border-green-500/30"
+                          : isCurrent
+                          ? "bg-blue-500/15 text-blue-400 border-blue-500/30"
+                          : "bg-muted/40 text-muted-foreground/50 border-border"
+                      }`}
+                    >
+                      {isDone ? "✓" : isCurrent ? "⏳" : ""} {stage.label}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {error && (
+            <div className="rounded-lg bg-red-500/10 border border-red-500/20 p-3">
+              <p className="text-sm font-medium text-red-400 mb-1">推进中断</p>
+              <p className="text-xs text-foreground/70">{error}</p>
+            </div>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─────────────────────────────────────────────
 // Main Page
 // ─────────────────────────────────────────────
 export default function PipelineDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { data: articleData, loading, refresh } = useApiGet<AnyRecord>(`/api/articles/${id}`);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleValue, setTitleValue] = useState("");
   const [saving, setSaving] = useState(false);
+
+  // ── Auto-advance state ──
+  const [autoAdvancing, setAutoAdvancing] = useState(false);
+  const [autoStage, setAutoStage] = useState("");
+  const [autoError, setAutoError] = useState("");
+  const [autoCompleted, setAutoCompleted] = useState<string[]>([]);
+  const autoAbortRef = useRef(false);
+  const autoStartedRef = useRef(false);
 
   const article = articleData;
   const steps: AnyRecord[] = article?.steps || [];
@@ -1141,6 +1239,96 @@ export default function PipelineDetailPage({ params }: { params: Promise<{ id: s
     }, 5000);
     return () => clearInterval(interval);
   }, [isCurrentRunning, refresh]);
+
+  // ── Auto-advance loop ──
+  const runAutoAdvance = useCallback(async () => {
+    setAutoAdvancing(true);
+    setAutoError("");
+    setAutoCompleted([]);
+    autoAbortRef.current = false;
+
+    try {
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        if (autoAbortRef.current) {
+          break;
+        }
+
+        const res = await apiFetch<{
+          action: string;
+          stage?: string;
+          error?: string;
+          message?: string;
+        }>(`/api/articles/${id}/auto-advance`, { method: "POST" });
+
+        const { action, stage, error: resError } = res;
+        if (stage) setAutoStage(stage);
+
+        if (action === "allDone") {
+          toast.success("🎉 全部阶段已自动完成！");
+          refresh();
+          break;
+        }
+
+        if (action === "failed") {
+          setAutoError(resError || "执行失败");
+          toast.error(`阶段 ${stage} 执行失败`);
+          refresh();
+          break;
+        }
+
+        if (action === "executed") {
+          // Stage executed successfully, mark completed and continue
+          if (stage) {
+            setAutoCompleted((prev) => {
+              // Also add all stages before this one that are done
+              const idx = STAGES.findIndex((s) => s.key === stage);
+              const all = STAGES.slice(0, idx).map((s) => s.key);
+              const merged = new Set([...prev, ...all, stage]);
+              return Array.from(merged);
+            });
+          }
+          refresh();
+          // Small delay to avoid hammering the server
+          await new Promise((r) => setTimeout(r, 500));
+          continue;
+        }
+
+        if (action === "running") {
+          // Still running, wait and poll again
+          await new Promise((r) => setTimeout(r, 3000));
+          continue;
+        }
+
+        // Unknown action
+        break;
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "自动推进失败";
+      setAutoError(msg);
+      toast.error(msg);
+    } finally {
+      setAutoAdvancing(false);
+      refresh();
+    }
+  }, [id, refresh]);
+
+  const stopAutoAdvance = useCallback(() => {
+    autoAbortRef.current = true;
+  }, []);
+
+  // ── Auto-start from URL param ──
+  useEffect(() => {
+    if (
+      searchParams.get("autoAdvance") === "true" &&
+      !autoStartedRef.current &&
+      article &&
+      article.status !== "completed"
+    ) {
+      autoStartedRef.current = true;
+      runAutoAdvance();
+    }
+  }, [searchParams, article, runAutoAdvance]);
 
   const handleTitleEdit = () => {
     setTitleValue(article?.title || "");
@@ -1242,10 +1430,39 @@ export default function PipelineDetailPage({ params }: { params: Promise<{ id: s
             </span>
           </div>
         </div>
-        <Button variant="outline" onClick={() => router.push("/pipeline")} className="shrink-0">
-          ← 返回看板
-        </Button>
+        <div className="flex items-center gap-2 shrink-0">
+          {article.status !== "completed" && (
+            <Button
+              onClick={autoAdvancing ? stopAutoAdvance : runAutoAdvance}
+              disabled={false}
+              variant={autoAdvancing ? "outline" : "default"}
+              className={autoAdvancing ? "" : "bg-primary hover:bg-primary/90"}
+            >
+              {autoAdvancing ? (
+                <><Loader2 className="w-4 h-4 mr-2 animate-spin" />推进中...</>
+              ) : (
+                <><Rocket className="w-4 h-4 mr-2" />一键推进</>
+              )}
+            </Button>
+          )}
+          <Button variant="outline" onClick={() => router.push("/pipeline")}>
+            ← 返回看板
+          </Button>
+        </div>
       </div>
+
+      {/* 自动推进面板 */}
+      {(autoAdvancing || autoError) && (
+        <AutoAdvancePanel
+          articleId={id}
+          running={autoAdvancing}
+          currentAutoStage={autoStage}
+          error={autoError}
+          completedStages={autoCompleted}
+          onStart={runAutoAdvance}
+          onStop={stopAutoAdvance}
+        />
+      )}
 
       {/* 阶段进度条 */}
       <Card>

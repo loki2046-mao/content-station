@@ -30,6 +30,7 @@ import {
 import { PageHeader } from "@/components/page-header";
 import { SkeletonCard, EmptyState } from "@/components/loading";
 import { toast } from "sonner";
+import { Rocket } from "lucide-react";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyRecord = Record<string, any>;
@@ -56,15 +57,32 @@ const STEP_STATUS_CONFIG: Record<string, { label: string; color: string; dot: st
 function ArticleCard({ article, currentStepStatus }: { article: AnyRecord; currentStepStatus: string }) {
   const router = useRouter();
   const config = STEP_STATUS_CONFIG[currentStepStatus] || STEP_STATUS_CONFIG.pending;
+  const isCompleted = article.status === "completed";
+
+  const handleAutoAdvance = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    router.push(`/pipeline/${article.id}?autoAdvance=true`);
+  };
 
   return (
     <div
       onClick={() => router.push(`/pipeline/${article.id}`)}
       className="group cursor-pointer rounded-lg border border-border bg-card p-3 hover:border-primary/30 transition-all hover:shadow-sm"
     >
-      <p className="text-sm font-medium line-clamp-2 mb-2 group-hover:text-primary/90 transition-colors">
-        {article.title}
-      </p>
+      <div className="flex items-start justify-between gap-1 mb-2">
+        <p className="text-sm font-medium line-clamp-2 group-hover:text-primary/90 transition-colors flex-1">
+          {article.title}
+        </p>
+        {!isCompleted && (
+          <button
+            onClick={handleAutoAdvance}
+            className="flex-shrink-0 p-1 rounded-md opacity-0 group-hover:opacity-100 transition-opacity hover:bg-primary/10 text-primary"
+            title="一键自动推进"
+          >
+            <Rocket className="w-3.5 h-3.5" />
+          </button>
+        )}
+      </div>
       <div className="flex items-center justify-between gap-2">
         <Badge
           variant="outline"
