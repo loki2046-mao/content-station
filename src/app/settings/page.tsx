@@ -163,8 +163,8 @@ export default function SettingsPage() {
   useEffect(() => {
     apiFetch<AnyRecord>("/api/settings/api-key")
       .then((res) => {
-        if (res.data?.maskedKey) {
-          setStationApiKeyMasked(res.data.maskedKey as string);
+        if (res?.maskedKey) {
+          setStationApiKeyMasked(res.maskedKey as string);
         }
       })
       .catch(() => {});
@@ -176,7 +176,7 @@ export default function SettingsPage() {
     setStationApiKey(null);
     try {
       const res = await apiFetch<AnyRecord>("/api/settings/api-key", { method: "POST" });
-      const newKey = res.data?.apiKey as string;
+      const newKey = res?.apiKey as string;
       setStationApiKey(newKey);
       setStationApiKeyMasked(null); // 展示明文，刷新后才遮罩
       toast.success("新 API Key 已生成，请立即复制保存！");
