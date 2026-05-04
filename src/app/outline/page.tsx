@@ -435,9 +435,13 @@ export default function OutlinePage() {
             {historyList.map((record) => {
               const isGenerating = record.status === "generating";
               const isError = record.status === "error";
-              const result = isGenerating || isError
-                ? {}
-                : (typeof record.result === "string" ? JSON.parse(record.result) : record.result);
+              const parseResult = (raw: unknown) => {
+                try {
+                  const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+                  return Array.isArray(parsed) ? { sections: parsed } : (parsed || {});
+                } catch { return {}; }
+              };
+              const result = isGenerating || isError ? {} : parseResult(record.result);
               return (
                 <Card
                   key={record.id}
@@ -453,7 +457,7 @@ export default function OutlinePage() {
                 >
                   <CardContent className="pt-4">
                     <div className="flex items-center justify-between">
-                      <div>
+                      <div className="flex-1 min-w-0">
                         {isGenerating ? (
                           <Badge variant="outline" className="bg-amber-500/20 text-amber-400 border-amber-500/30">
                             生成中...
@@ -464,7 +468,7 @@ export default function OutlinePage() {
                           </Badge>
                         ) : (
                           <>
-                            <p className="text-sm font-medium">{result?.coreTension || "骨架记录"}</p>
+                            <p className="text-sm font-medium truncate">{result?.coreTension || "骨架记录"}</p>
                             <p className="text-xs text-muted-foreground mt-1">
                               {result?.sections?.length || 0} 个段落 · {record.modelUsed || record.model_used} ·{" "}
                               {new Date(record.createdAt || record.created_at).toLocaleString("zh-CN")}
@@ -472,9 +476,40 @@ export default function OutlinePage() {
                           </>
                         )}
                       </div>
-                      {(record.editedResult || record.edited_result) && (
-                        <Badge variant="outline" className="text-xs">已编辑</Badge>
-                      )}
+                      <div className="flex items-center gap-1 ml-2 shrink-0" onClick={(e) => e.stopPropagation()}>
+                        {!isGenerating && !isError && result?.coreTension && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 px-2 text-xs text-muted-foreground hover:text-primary"
+                            onClick={async () => {
+                              await handleSaveToMaterials(result.coreTension, "opinion", `outline-core-${record.id}`);
+                            }}
+                          >
+                            存素材
+                          </Button>
+                        )}
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 px-2 text-xs text-red-400 hover:text-red-500 hover:bg-red-500/10"
+                          onClick={async () => {
+                            if (!confirm("确定删除这条骨架记录？")) return;
+                            await apiFetch(`/api/outlines/${record.id}`, { method: "DELETE" });
+                            if (currentId === record.id) {
+                              setCurrentResult(null);
+                              setCurrentId(null);
+                            }
+                            refreshHistory();
+                            toast.success("已删除");
+                          }}
+                        >
+                          删除
+                        </Button>
+                        {(record.editedResult || record.edited_result) && (
+                          <Badge variant="outline" className="text-xs">已编辑</Badge>
+                        )}
+                      </div>
                     </div>
                   </CardContent>
                 </Card>

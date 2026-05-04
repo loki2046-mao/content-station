@@ -170,41 +170,57 @@ export default function TopicsPage() {
               try { return JSON.parse(topic.tags || "[]"); } catch { return []; }
             })();
             return (
-              <Link key={topic.id} href={`/topics/${topic.id}`}>
-                <Card className="hover:border-primary/30 transition-colors cursor-pointer">
-                  <CardContent className="pt-4 pb-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <h3 className="font-medium truncate">{topic.title}</h3>
-                          <StatusBadge status={topic.status} />
-                        </div>
-                        {topic.summary && (
-                          <p className="text-sm text-muted-foreground line-clamp-2">{topic.summary}</p>
-                        )}
-                        <div className="flex items-center gap-2 mt-2">
-                          {tags.map((tag: string) => {
-                            const tagInfo = allTags.find((t) => t.name === tag);
-                            return (
-                              <Badge
-                                key={tag}
-                                variant="outline"
-                                className="text-xs"
-                                style={tagInfo ? { borderColor: tagInfo.color, color: tagInfo.color } : {}}
-                              >
-                                {tag}
-                              </Badge>
-                            );
-                          })}
-                          <span className="text-xs text-muted-foreground ml-auto">
-                            {new Date(topic.createdAt || topic.created_at).toLocaleDateString("zh-CN")}
-                          </span>
+              <div key={topic.id} className="relative group">
+                <Link href={`/topics/${topic.id}`}>
+                  <Card className="hover:border-primary/30 transition-colors cursor-pointer">
+                    <CardContent className="pt-4 pb-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <h3 className="font-medium truncate">{topic.title}</h3>
+                            <StatusBadge status={topic.status} />
+                          </div>
+                          {topic.summary && (
+                            <p className="text-sm text-muted-foreground line-clamp-2">{topic.summary}</p>
+                          )}
+                          <div className="flex items-center gap-2 mt-2">
+                            {tags.map((tag: string) => {
+                              const tagInfo = allTags.find((t) => t.name === tag);
+                              return (
+                                <Badge
+                                  key={tag}
+                                  variant="outline"
+                                  className="text-xs"
+                                  style={tagInfo ? { borderColor: tagInfo.color, color: tagInfo.color } : {}}
+                                >
+                                  {tag}
+                                </Badge>
+                              );
+                            })}
+                            <span className="text-xs text-muted-foreground ml-auto">
+                              {new Date(topic.createdAt || topic.created_at).toLocaleDateString("zh-CN")}
+                            </span>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              </Link>
+                    </CardContent>
+                  </Card>
+                </Link>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="absolute top-2 right-2 h-7 px-2 text-xs text-red-400 hover:text-red-500 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition-opacity"
+                  onClick={async (e) => {
+                    e.preventDefault();
+                    if (!confirm("确定删除这个选题吗？")) return;
+                    await apiFetch(`/api/topics/${topic.id}`, { method: "DELETE" });
+                    refresh();
+                    toast.success("已删除");
+                  }}
+                >
+                  删除
+                </Button>
+              </div>
             );
           })}
         </div>

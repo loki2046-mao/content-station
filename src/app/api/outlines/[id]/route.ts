@@ -11,6 +11,20 @@ import { eq } from "drizzle-orm";
 
 type RouteParams = { params: Promise<{ id: string }> };
 
+export async function DELETE(_request: NextRequest, { params }: RouteParams) {
+  await ensureDbInit();
+  const db = getDb();
+  if (!db) return dbError();
+  const { id } = await params;
+
+  try {
+    await db.delete(outlines).where(eq(outlines.id, id));
+    return ok({ deleted: true });
+  } catch (error) {
+    return err(`删除失败: ${error}`, 500);
+  }
+}
+
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
   await ensureDbInit();
   const db = getDb();

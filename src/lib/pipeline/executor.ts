@@ -4,8 +4,28 @@
  * 供内部 API 和外部 API 共同复用
  */
 import { getDb } from "@/lib/db";
-import { articles, articleSteps, materials } from "@/lib/db/schema";
+import { articles, articleSteps, materials, settings } from "@/lib/db/schema";
 import { eq, and, or, like } from "drizzle-orm";
+
+/** 调用 Serper 搜索 API 返回结果摘要 */
+async function searchSerper(query: string, apiKey: string): Promise<{ title: string; snippet: string; link: string }[]> {
+  try {
+    const resp = await fetch("https://google.serper.dev/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-API-KEY": apiKey },
+      body: JSON.stringify({ q: query, gl: "cn", hl: "zh-cn", num: 5 }),
+    });
+    if (!resp.ok) return [];
+    const data = await resp.json() as { organic?: { title: string; snippet: string; link: string }[] };
+    return (data.organic || []).slice(0, 5).map((r) => ({
+      title: r.title || "",
+      snippet: r.snippet || "",
+      link: r.link || "",
+    }));
+  } catch {
+    return [];
+  }
+}
 import { getProvider } from "@/lib/providers";
 import {
   PIPELINE_SYSTEM_PROMPT,
@@ -164,10 +184,22 @@ export async function runStageExecution(articleId: string, stage: Stage) {
         tags: m.tags || "[]",
       }));
 
+      // 如果素材库匹配结果少于3条，自动用 Serper 搜索补充
+      let webResults: { title: string; snippet: string; link: string }[] = [];
+      if (existingMaterials.length < 3) {
+        const serperKeyRow = await db.select().from(settings).where(eq(settings.key, "serper_api_key"));
+        const serperKey = serperKeyRow[0]?.value?.replace(/^"|"$/g, "") || "";
+        if (serperKey) {
+          const searchQuery = angle ? `${articleTitle} ${angle.slice(0, 20)}` : articleTitle;
+          webResults = await searchSerper(searchQuery, serperKey);
+        }
+      }
+
       const prompt = buildMaterialSuggestionPrompt({
         title: articleTitle,
         angle: angle || articleTitle,
         existingMaterials,
+        webResults,
       });
       const raw = await provider.generate(prompt, {
         systemPrompt: PIPELINE_SYSTEM_PROMPT,
@@ -281,11 +313,11 @@ export async function runStageExecution(articleId: string, stage: Stage) {
         temperature: 0.85,
         maxTokens: 6000,
       });
-      const parsed = parseLLMJson<{ content: string; wordCount: number }>(raw);
+      // 初稿直接当正文存，不要尝试 parse JSON（正文里有 Markdown 特殊字符会导致 JSON 解析失败）
+      const content = raw.trim();
       outputData = {
-        content: parsed.content || raw,
-        wordCount:
-          parsed.wordCount || (parsed.content || raw).length,
+        content,
+        wordCount: content.length,
       };
     }
 

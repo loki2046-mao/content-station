@@ -262,6 +262,24 @@ export default function AnalyzePage() {
                       <span className="text-xs text-muted-foreground shrink-0">
                         {new Date(record.createdAt || record.created_at).toLocaleString("zh-CN")}
                       </span>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-6 px-2 text-xs text-red-400 hover:text-red-500 hover:bg-red-500/10 shrink-0"
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          if (!confirm("确定删除这条切口分析？")) return;
+                          await apiFetch(`/api/analyses/${record.id}`, { method: "DELETE" });
+                          if (currentAnalysisId === record.id) {
+                            setCurrentResult(null);
+                            setCurrentAnalysisId(null);
+                          }
+                          refreshHistory();
+                          toast.success("已删除");
+                        }}
+                      >
+                        删除
+                      </Button>
                     </CardTitle>
                   </CardHeader>
                   <CardContent>

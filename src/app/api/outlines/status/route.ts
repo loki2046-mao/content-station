@@ -23,10 +23,23 @@ export async function GET(request: NextRequest) {
     if (rows.length === 0) return err("记录不存在", 404);
 
     const record = rows[0];
+
+    // 解析 result：统一返回对象格式
+    let parsedResult: unknown = undefined;
+    if (record.status === "done" && record.result) {
+      try {
+        const raw = typeof record.result === "string" ? JSON.parse(record.result) : record.result;
+        // 兼容旧格式：如果是数组，包装成 {sections: [...]}
+        parsedResult = Array.isArray(raw) ? { sections: raw } : raw;
+      } catch {
+        parsedResult = undefined;
+      }
+    }
+
     return ok({
       id: record.id,
       status: record.status || "done",
-      result: record.status === "done" ? record.result : undefined,
+      result: parsedResult,
       error: record.status === "error" ? record.error : undefined,
     });
   } catch (error) {

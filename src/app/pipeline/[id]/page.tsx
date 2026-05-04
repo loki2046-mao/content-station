@@ -29,6 +29,7 @@ import {
   Pencil,
   Rocket,
   Square,
+  Copy,
 } from "lucide-react";
 import {
   PIPELINE_SYSTEM_PROMPT,
@@ -254,10 +255,11 @@ async function runClientLLM(
 
   // 解析输出
   if (stage === "draft") {
-    const parsed = parseLLMJson<{ content: string; wordCount: number }>(raw);
+    // 初稿直接当正文存，不 parse JSON（正文里有 Markdown 特殊字符会导致 JSON 解析失败）
+    const content = raw.trim();
     outputData = {
-      content: parsed.content || raw,
-      wordCount: parsed.wordCount || (parsed.content || raw).length,
+      content,
+      wordCount: content.length,
     };
   } else {
     outputData = parseLLMJson(raw);
@@ -303,6 +305,97 @@ function safeJson<T = AnyRecord>(str: string | null | undefined): T | null {
 // ─────────────────────────────────────────────
 // Stage Output Components
 // ─────────────────────────────────────────────
+
+/** 历史阶段输出渲染：根据阶段类型用可读方式展示，而不是 raw JSON */
+function HistoryOutput({ stage, outputData }: { stage: string; outputData: AnyRecord }) {
+  // draft / layout: 展示文章内容
+  if (stage === "draft" || stage === "layout") {
+    const content = outputData?.content as string || "";
+    if (content) {
+      return (
+        <div className="rounded-lg border border-border bg-muted/10 p-4">
+          <div className="text-sm text-foreground/90 leading-8 whitespace-pre-wrap font-sans">
+            {content}
+          </div>
+        </div>
+      );
+    }
+  }
+  // skeleton: 展示章节结构
+  if (stage === "skeleton") {
+    const sections = outputData?.sections as AnyRecord[] || [];
+    const writingTip = outputData?.writingTip as string || "";
+    if (sections.length > 0) {
+      return (
+        <div className="space-y-3">
+          {writingTip && (
+            <div className="rounded-md bg-amber-500/10 border border-amber-500/20 p-3">
+              <p className="text-sm text-foreground/90">{writingTip}</p>
+            </div>
+          )}
+          {sections.map((s, i) => (
+            <div key={i} className="rounded-md border border-border p-3">
+              <p className="font-semibold text-sm mb-2">{i + 1}. {s.title as string}</p>
+              {(s.keyPoints as string[] || []).map((p, j) => (
+                <p key={j} className="text-sm text-foreground/80 leading-relaxed">• {p}</p>
+              ))}
+            </div>
+          ))}
+        </div>
+      );
+    }
+  }
+  // topic: 展示加工后的角度列表
+  if (stage === "topic") {
+    const angles = outputData?.angles as AnyRecord[] || [];
+    if (angles.length > 0) {
+      return (
+        <div className="space-y-2">
+          {angles.map((a, i) => (
+            <div key={i} className="rounded-md border border-border p-3">
+              <p className="font-medium text-sm">{a.name as string}</p>
+              {a.description && <p className="text-sm text-foreground/70 mt-1">{a.description as string}</p>}
+            </div>
+          ))}
+        </div>
+      );
+    }
+  }
+  // material: 展示素材摘要
+  if (stage === "material") {
+    const summary = outputData?.summary as string || "";
+    if (summary) {
+      return (
+        <div className="rounded-md border border-border bg-muted/10 p-3">
+          <p className="text-sm text-foreground/90 whitespace-pre-wrap leading-relaxed">{summary}</p>
+        </div>
+      );
+    }
+  }
+  // cover: 展示标题方案
+  if (stage === "cover") {
+    const titles = outputData?.titleOptions as AnyRecord[] || [];
+    if (titles.length > 0) {
+      return (
+        <div className="space-y-2">
+          {titles.map((t, i) => (
+            <div key={i} className="rounded-md border border-border p-3">
+              <p className="font-medium text-sm">{t.title as string || t as unknown as string}</p>
+              {t.reason && <p className="text-xs text-foreground/60 mt-1">{t.reason as string}</p>}
+            </div>
+          ))}
+        </div>
+      );
+    }
+  }
+  // 其他阶段或没有结构化内容：显示简单文本展示
+  const fallbackText = typeof outputData === "string" ? outputData : JSON.stringify(outputData, null, 2);
+  return (
+    <div className="rounded-md border border-border bg-muted/10 p-3">
+      <p className="text-sm text-foreground/80 whitespace-pre-wrap leading-relaxed">{fallbackText}</p>
+    </div>
+  );
+}
 
 /** topic 阶段输出：角度选择卡片 */
 function TopicOutput({
@@ -439,27 +532,25 @@ function SkeletonOutput({
         </div>
       )}
       {sections.length > 0 && (
-        <div className="space-y-2">
+        <div className="space-y-3">
           <div className="flex items-center justify-between">
             <p className="text-xs font-medium text-muted-foreground">文章结构（{sections.length} 章节，约 {totalWords} 字）</p>
           </div>
           {sections.map((s, i) => (
-            <div key={i} className="rounded-md border border-border p-3">
-              <div className="flex items-start justify-between gap-2 mb-2">
-                <span className="font-medium text-sm">{i + 1}. {s.title}</span>
+            <div key={i} className="rounded-md border border-border p-4">
+              <div className="flex items-start justify-between gap-2 mb-3">
+                <span className="font-semibold text-base">{i + 1}. {s.title}</span>
                 <div className="flex items-center gap-2 shrink-0">
-                  <Badge variant="outline" className="text-xs border-border text-muted-foreground">
-                    {s.contentType}
-                  </Badge>
+                  {s.contentType && <Badge variant="outline" className="text-xs border-border text-muted-foreground">{s.contentType}</Badge>}
                   <span className="text-xs text-muted-foreground">~{s.estimatedWords}字</span>
                 </div>
               </div>
               {s.keyPoints && (
-                <ul className="space-y-0.5">
+                <ul className="space-y-1.5">
                   {(s.keyPoints as string[]).map((p, j) => (
-                    <li key={j} className="text-xs text-foreground/70 flex gap-1.5">
-                      <span className="text-muted-foreground mt-0.5">•</span>
-                      <span>{p}</span>
+                    <li key={j} className="text-sm text-foreground/80 flex gap-2">
+                      <span className="text-muted-foreground mt-0.5 shrink-0">•</span>
+                      <span className="leading-relaxed">{p}</span>
                     </li>
                   ))}
                 </ul>
@@ -499,13 +590,26 @@ function DraftOutput({
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <p className="text-xs font-medium text-muted-foreground">初稿内容</p>
-        <span className="text-xs text-muted-foreground">{wordCount} 字</span>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-muted-foreground">{wordCount} 字</span>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-6 px-2 text-xs gap-1"
+            onClick={() => {
+              navigator.clipboard.writeText(content);
+              toast.success("已复制全文");
+            }}
+          >
+            <Copy className="w-3 h-3" />
+            一键复制
+          </Button>
+        </div>
       </div>
-      {/* Markdown 渲染（用 pre 展示，实际生产可换 react-markdown） */}
-      <div className="rounded-lg border border-border bg-muted/10 p-4 max-h-80 overflow-y-auto">
-        <pre className="text-sm text-foreground/90 whitespace-pre-wrap font-sans leading-relaxed">
+      <div className="rounded-lg border border-border bg-muted/10 p-5">
+        <div className="text-sm text-foreground/90 leading-8 whitespace-pre-wrap font-sans">
           {content}
-        </pre>
+        </div>
       </div>
       <div>
         <Label className="text-xs text-muted-foreground">修改内容（直接编辑，留空则使用上方原稿）：</Label>
@@ -513,8 +617,8 @@ function DraftOutput({
           value={editedDraft}
           onChange={(e) => onEdit(e.target.value)}
           placeholder="如需修改，在这里直接粘贴修改后的全文..."
-          className="mt-1.5 text-sm font-mono"
-          rows={6}
+          className="mt-1.5 text-sm"
+          rows={10}
         />
       </div>
     </div>
@@ -545,6 +649,18 @@ function LayoutOutput({ output }: { output: AnyRecord }) {
       </div>
       <div className="flex items-center justify-between">
         <p className="text-xs font-medium text-muted-foreground">初稿内容（约 {wordCount} 字）</p>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-6 px-2 text-xs gap-1"
+          onClick={() => {
+            navigator.clipboard.writeText(content);
+            toast.success("已复制全文，可直接粘贴到排版编辑器");
+          }}
+        >
+          <Copy className="w-3 h-3" />
+          一键复制
+        </Button>
       </div>
       <div className="rounded-lg border border-border bg-muted/10 p-4 max-h-60 overflow-y-auto">
         <pre className="text-xs text-foreground/80 whitespace-pre-wrap font-sans leading-relaxed">
@@ -1093,11 +1209,8 @@ function StepHistoryPanel({ steps }: { steps: AnyRecord[] }) {
                   )}
                   {outputData && (
                     <div>
-                      <p className="text-xs text-muted-foreground mb-1 font-medium">阶段输出摘要</p>
-                      <pre className="text-xs bg-muted/30 rounded-md p-2 overflow-auto max-h-32 text-foreground/70">
-                        {JSON.stringify(outputData, null, 2).slice(0, 500)}
-                        {JSON.stringify(outputData, null, 2).length > 500 ? "\n...(已截断)" : ""}
-                      </pre>
+                      <p className="text-xs text-muted-foreground mb-1 font-medium">阶段输出</p>
+                      <HistoryOutput stage={stage.key} outputData={outputData} />
                     </div>
                   )}
                   {step?.error && (

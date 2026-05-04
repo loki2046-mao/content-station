@@ -501,10 +501,11 @@ export default function SettingsPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <p className="text-sm text-muted-foreground">
-            用于外部客户端（curl、iOS Shortcuts、AI Agent）通过 API 触发写作 Pipeline，无需浏览器登录。
+            用于外部客户端（curl、iOS Shortcuts、AI Agent）通过 API 触发写作 Pipeline 或热点抓取，无需浏览器登录。
           </p>
           <div className="text-xs text-muted-foreground bg-muted rounded p-3 font-mono break-all">
             POST https://station.hiloki.ai/api/external/pipeline<br />
+            POST https://station.hiloki.ai/api/external/hotspots<br />
             Authorization: Bearer &lt;api-key&gt;
           </div>
 

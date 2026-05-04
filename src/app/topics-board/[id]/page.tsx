@@ -82,19 +82,21 @@ function TopicCard({
   };
 
   const handleStatusToggle = async (status: string) => {
-    const newStatus = card.card_status === status ? "active" : status;
+    const cardStatus = card.cardStatus || card.card_status;
+    const newStatus = cardStatus === status ? "active" : status;
     await onUpdate(card.id, { cardStatus: newStatus });
   };
 
   const handlePin = async () => {
-    await onUpdate(card.id, { isPinned: card.is_pinned ? 0 : 1 });
+    const isPinned = card.isPinned ?? card.is_pinned ?? 0;
+    await onUpdate(card.id, { isPinned: isPinned ? 0 : 1 });
   };
 
   return (
     <div
       className={`rounded-lg border p-3 transition-all ${
-        CARD_STATUS_STYLES[card.card_status] || ""
-      } ${card.is_pinned ? "ring-1 ring-primary/30" : ""}`}
+        CARD_STATUS_STYLES[card.cardStatus || card.card_status] || ""
+      } ${(card.isPinned ?? card.is_pinned) ? "ring-1 ring-primary/30" : ""}`}
     >
       {editing ? (
         <div className="space-y-2">
@@ -123,10 +125,10 @@ function TopicCard({
         <>
           <div className="flex items-start justify-between gap-2 mb-1">
             <p className="font-medium text-sm leading-snug flex-1">
-              {card.is_pinned ? "📌 " : ""}
+              {(card.isPinned ?? card.is_pinned) ? "📌 " : ""}
               {card.title}
             </p>
-            {card.source_type === "generated" && (
+            {(card.sourceType || card.source_type) === "generated" && (
               <span className="text-xs text-muted-foreground shrink-0 bg-muted px-1.5 py-0.5 rounded">
                 AI
               </span>
@@ -139,17 +141,17 @@ function TopicCard({
             <button
               onClick={() => handleStatusToggle("preferred")}
               className={`text-xs px-2 py-0.5 rounded border transition-colors ${
-                card.card_status === "preferred"
+                (card.cardStatus || card.card_status) === "preferred"
                   ? "border-green-500 text-green-600 bg-green-50 dark:bg-green-950"
                   : "border-border text-muted-foreground hover:border-green-400 hover:text-green-600"
               }`}
             >
-              {card.card_status === "preferred" ? "✓ 最优" : "标为最优"}
+              {(card.cardStatus || card.card_status) === "preferred" ? "✓ 最优" : "标为最优"}
             </button>
             <button
               onClick={() => handleStatusToggle("discarded")}
               className={`text-xs px-2 py-0.5 rounded border transition-colors ${
-                card.card_status === "discarded"
+                (card.cardStatus || card.card_status) === "discarded"
                   ? "border-border text-muted-foreground bg-muted"
                   : "border-border text-muted-foreground hover:border-red-300 hover:text-red-500"
               }`}
@@ -160,7 +162,7 @@ function TopicCard({
               onClick={handlePin}
               className="text-xs px-2 py-0.5 rounded border border-border text-muted-foreground hover:border-primary/50 hover:text-primary transition-colors"
             >
-              {card.is_pinned ? "取消置顶" : "置顶"}
+              {(card.isPinned ?? card.is_pinned) ? "取消置顶" : "置顶"}
             </button>
             <button
               onClick={() => {
@@ -228,10 +230,12 @@ function ZonePanel({
   const [generating, setGenerating] = useState(false);
 
   const zoneCards = cards
-    .filter((c) => c.zone_type === zone.type)
+    .filter((c) => (c.zoneType || c.zone_type) === zone.type)
     .sort((a, b) => {
-      if (a.is_pinned !== b.is_pinned) return b.is_pinned - a.is_pinned;
-      return a.sort_order - b.sort_order;
+      const aPinned = a.isPinned ?? a.is_pinned ?? 0;
+      const bPinned = b.isPinned ?? b.is_pinned ?? 0;
+      if (aPinned !== bPinned) return bPinned - aPinned;
+      return (a.sortOrder ?? a.sort_order ?? 0) - (b.sortOrder ?? b.sort_order ?? 0);
     });
 
   const handleAdd = async () => {
@@ -379,7 +383,7 @@ function SummaryPanel({
   // 从 preferred 卡片聚合建议
   const getPreferredTitle = (zoneType: string) => {
     const preferred = cards.find(
-      (c) => c.zone_type === zoneType && c.card_status === "preferred"
+      (c) => (c.zoneType || c.zone_type) === zoneType && (c.cardStatus || c.card_status) === "preferred"
     );
     return preferred?.title || "";
   };

@@ -20,6 +20,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PageHeader } from "@/components/page-header";
 import { SkeletonCard, EmptyState } from "@/components/loading";
+import { COLA_TOPIC_SOURCES } from "@/lib/hotspots/sources";
 import { toast } from "sonner";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -27,28 +28,21 @@ type AnyRecord = Record<string, any>;
 
 /** 来源配置：标签颜色和中文名 */
 const SOURCE_CONFIG: Record<string, { label: string; className: string }> = {
-  weibo: { label: "微博", className: "bg-red-500/20 text-red-400 border-red-500/30" },
-  zhihu: { label: "知乎", className: "bg-blue-500/20 text-blue-400 border-blue-500/30" },
-  baidu: { label: "百度", className: "bg-sky-500/20 text-sky-400 border-sky-500/30" },
-  "36kr": { label: "36kr", className: "bg-teal-500/20 text-teal-400 border-teal-500/30" },
-  hackernews: { label: "HackerNews", className: "bg-orange-500/20 text-orange-400 border-orange-500/30" },
-  x_kol: { label: "KOL", className: "bg-zinc-500/20 text-zinc-400 border-zinc-500/30" },
-  x_kol_intl: { label: "国际KOL", className: "bg-purple-500/20 text-purple-400 border-purple-500/30" },
-  ai_media: { label: "AI媒体", className: "bg-indigo-500/20 text-indigo-400 border-indigo-500/30" },
-  edu_policy: { label: "教育政策", className: "bg-green-500/20 text-green-400 border-green-500/30" },
+  即刻AI圈: { label: "即刻AI圈", className: "bg-red-500/20 text-red-400 border-red-500/30" },
+  "Twitter/X AI圈": { label: "Twitter/X AI圈", className: "bg-purple-500/20 text-purple-400 border-purple-500/30" },
+  少数派AI: { label: "少数派AI", className: "bg-indigo-500/20 text-indigo-400 border-indigo-500/30" },
+  "ProductHunt AI": { label: "ProductHunt AI", className: "bg-orange-500/20 text-orange-400 border-orange-500/30" },
+  "36氪AI频道": { label: "36氪AI频道", className: "bg-teal-500/20 text-teal-400 border-teal-500/30" },
+  模型更新追踪: { label: "模型更新", className: "bg-blue-500/20 text-blue-400 border-blue-500/30" },
+  国产模型动态: { label: "国产模型", className: "bg-sky-500/20 text-sky-400 border-sky-500/30" },
+  "AI+教育": { label: "AI+教育", className: "bg-green-500/20 text-green-400 border-green-500/30" },
+  AI图像生成: { label: "AI图像", className: "bg-pink-500/20 text-pink-400 border-pink-500/30" },
+  AI视频生成: { label: "AI视频", className: "bg-amber-500/20 text-amber-400 border-amber-500/30" },
 };
 
 const SOURCE_OPTIONS = [
   { value: "all", label: "全部来源" },
-  { value: "weibo", label: "微博" },
-  { value: "zhihu", label: "知乎" },
-  { value: "baidu", label: "百度" },
-  { value: "36kr", label: "36kr" },
-  { value: "hackernews", label: "HackerNews" },
-  { value: "x_kol", label: "KOL" },
-  { value: "x_kol_intl", label: "国际KOL" },
-  { value: "ai_media", label: "AI媒体" },
-  { value: "edu_policy", label: "教育政策" },
+  ...COLA_TOPIC_SOURCES.map((source) => ({ value: source.name, label: source.name })),
 ];
 
 /** 来源 Badge */
@@ -88,11 +82,45 @@ function HeatIndicator({ score }: { score: number }) {
   );
 }
 
+// Loki 核心内容标签 — 用于热点相关度打分
+const LOKI_CONTENT_KEYWORDS = [
+  "AI工具", "测评", "工作流", "提示词", "prompt", "生图", "图像生成",
+  "内容创作", "公众号", "小红书", "内容运营", "自媒体",
+  "教育", "K12", "学习",
+  "个人经验", "实测", "对比", "使用",
+  "Agent", "记忆", "ChatGPT", "Claude", "Gemini", "GPT", "国产模型", "大模型",
+];
+
+function calcRelevanceScore(item: AnyRecord): number {
+  const text = `${item.title || ""} ${item.summary || ""} ${item.source || ""}`;
+  let score = 0;
+  for (const kw of LOKI_CONTENT_KEYWORDS) {
+    if (text.includes(kw)) score += 1;
+  }
+  return score;
+}
+
+function RelevanceBadge({ score }: { score: number }) {
+  if (score === 0) return null;
+  const label = score >= 4 ? "高度相关" : score >= 2 ? "相关" : "弱相关";
+  const cls = score >= 4
+    ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
+    : score >= 2
+    ? "bg-blue-500/20 text-blue-400 border-blue-500/30"
+    : "bg-zinc-500/20 text-zinc-400 border-zinc-500/30";
+  return (
+    <Badge variant="outline" className={`text-xs ${cls}`}>
+      ✦ {label}
+    </Badge>
+  );
+}
+
 export default function HotspotsPage() {
   const [search, setSearch] = useState("");
   const [sourceFilter, setSourceFilter] = useState("all");
   const [statusTab, setStatusTab] = useState("all");
   const [fetching, setFetching] = useState(false);
+  const [sortByRelevance, setSortByRelevance] = useState(false);
 
   // 构建查询 URL
   const params = new URLSearchParams();
@@ -114,7 +142,8 @@ export default function HotspotsPage() {
         method: "POST",
         body: JSON.stringify({ autoFetch: true }),
       });
-      toast.success(`抓取完成：新增 ${result.inserted} 条，去重 ${result.duplicates} 条`);
+      const skipped = result.skippedEmptyTitle ? `，跳过空标题 ${result.skippedEmptyTitle} 条` : "";
+      toast.success(`抓取完成：新增 ${result.inserted} 条，去重 ${result.duplicates} 条${skipped}`);
       refresh();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "抓取失败");
@@ -173,6 +202,11 @@ export default function HotspotsPage() {
     [refresh]
   );
 
+  // 相关度排序
+  const sortedHotspots = sortByRelevance && hotspotsList
+    ? [...hotspotsList].sort((a, b) => calcRelevanceScore(b) - calcRelevanceScore(a))
+    : hotspotsList;
+
   // 统计
   const totalNew = hotspotsList?.filter((h) => h.status === "new").length ?? 0;
 
@@ -196,6 +230,13 @@ export default function HotspotsPage() {
                 上次抓取：{new Date(lastFetchedAt).toLocaleString("zh-CN")}
               </span>
             )}
+            <Button
+              variant={sortByRelevance ? "default" : "outline"}
+              className="text-xs h-9"
+              onClick={() => setSortByRelevance((v) => !v)}
+            >
+              {sortByRelevance ? "✦ 相关优先" : "按时间"}
+            </Button>
             <Button
               onClick={handleFetch}
               disabled={fetching}
@@ -258,7 +299,7 @@ export default function HotspotsPage() {
         />
       ) : (
         <div className="grid gap-3">
-          {hotspotsList.map((item) => {
+          {(sortedHotspots ?? hotspotsList ?? []).map((item) => {
             const tags: string[] = (() => {
               try {
                 return JSON.parse(item.tags || "[]");
@@ -304,6 +345,7 @@ export default function HotspotsPage() {
                         <SourceBadge source={item.source} />
                         <HotspotStatusBadge status={item.status} />
                         <HeatIndicator score={heatScore} />
+                        <RelevanceBadge score={calcRelevanceScore(item)} />
                       </div>
 
                       {/* 摘要 */}
