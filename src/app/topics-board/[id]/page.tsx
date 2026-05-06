@@ -5,6 +5,7 @@
 "use client";
 
 import { useState, use, useCallback, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useApiGet, apiFetch } from "@/hooks/use-api";
 import { Card, CardContent } from "@/components/ui/card";
@@ -370,16 +371,44 @@ function SummaryPanel({
   onExport,
   saving,
   exporting,
+  projectTitle,
 }: {
   projectId: string;
   cards: AnyRecord[];
   summary: AnyRecord;
   onSummaryChange: (key: string, val: string) => void;
-  onSave: () => void;
+  onSave: () => void | Promise<void>;
   onExport: () => void;
   saving: boolean;
   exporting: boolean;
+  projectTitle: string;
 }) {
+  const router = useRouter();
+  const [creatingPipeline, setCreatingPipeline] = useState(false);
+
+  const handleStartPipeline = async () => {
+    setCreatingPipeline(true);
+    try {
+      // 先保存结论
+      await onSave();
+      // 创建文章，标题带入推演板的题目
+      const article = await apiFetch<AnyRecord>("/api/articles", {
+        method: "POST",
+        body: JSON.stringify({
+          title: projectTitle,
+          topicId: projectId,
+          angle: summary.recommendedAngle || "",
+          platform: summary.recommendedPlatform || "",
+        }),
+      });
+      toast.success("已创建文章，进入Pipeline");
+      router.push(`/pipeline/${article.id}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "创建失败");
+    } finally {
+      setCreatingPipeline(false);
+    }
+  };
   // 从 preferred 卡片聚合建议
   const getPreferredTitle = (zoneType: string) => {
     const preferred = cards.find(
@@ -450,6 +479,17 @@ function SummaryPanel({
             />
           </div>
         ))}
+      </div>
+
+      {/* 行动按钮 */}
+      <div className="mt-4 flex justify-end">
+        <Button
+          onClick={handleStartPipeline}
+          disabled={creatingPipeline}
+          className="bg-primary hover:bg-primary/90"
+        >
+          {creatingPipeline ? "创建中..." : "🚀 进入文章 Pipeline"}
+        </Button>
       </div>
     </div>
   );
@@ -780,6 +820,7 @@ export default function TopicsBoardDetailPage({
           onExport={handleExport}
           saving={savingSummary}
           exporting={exporting}
+          projectTitle={project.title}
         />
       </div>
     </div>
