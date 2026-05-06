@@ -20,12 +20,14 @@ export const COLA_TOPIC_SOURCES: readonly TopicSourceConfig[] = [
     type: "social",
     searchQuery: "即刻 AI 热门话题 今日",
     priority: "high",
+    enabled: false, // 即刻RSS搜索结果不稳定，暂时禁用
   },
   {
     name: "Twitter/X AI圈",
     type: "social",
     searchQuery: "AI tools trending twitter today",
     priority: "high",
+    enabled: false, // X平台搜索返回大量垃圾广告，暂时禁用
   },
   {
     name: "少数派AI",
