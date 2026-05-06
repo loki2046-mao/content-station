@@ -5,7 +5,7 @@
  */
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useApiGet, apiFetch } from "@/hooks/use-api";
@@ -36,6 +36,14 @@ const SUITABILITY_COLORS: Record<string, string> = {
 };
 
 export default function AnalyzePage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-center text-muted-foreground">加载中...</div>}>
+      <AnalyzeContent />
+    </Suspense>
+  );
+}
+
+function AnalyzeContent() {
   const searchParams = useSearchParams();
   const queryTopicId = searchParams.get("topicId");
   const [topicId, setTopicId] = useState("");

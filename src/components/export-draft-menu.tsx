@@ -7,8 +7,9 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Copy, Download, FileText, Info } from "lucide-react";
+import { Copy, Download, FileText, Info, NotebookPen, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { apiFetch } from "@/hooks/use-api";
 
 export interface ExportDraftMenuProps {
   /** 文章标题，用于文件名和 Obsidian 笔记名 */
@@ -47,6 +48,7 @@ function safeFileName(title: string): string {
 
 export function ExportDraftMenu({ title, content, frontmatter, size = "sm", compact = false }: ExportDraftMenuProps) {
   const [copying, setCopying] = useState(false);
+  const [pushingWps, setPushingWps] = useState(false);
 
   const fullMarkdown = `${buildFrontmatter(frontmatter)}# ${title || "未命名初稿"}\n\n${content}`;
   const fileName = `${safeFileName(title)}.md`;
@@ -81,8 +83,9 @@ export function ExportDraftMenu({ title, content, frontmatter, size = "sm", comp
   };
 
   /**
-   * 通过 obsidian:// URI 让 Obsidian 一键打开新建笔记
+   * 通过 obsidian:// URI 让 Obsidian 一键创建并打开新笔记
    * 不指定 vault 时会用最近使用的 vault
+   * 注意：不要加 silent=true，否则 Obsidian 创建后不切换到新笔记，用户看不到效果
    * 注意：超长内容（> ~32KB）部分系统/浏览器可能拦截 URI，下面有降级处理
    */
   const handleOpenInObsidian = () => {
@@ -93,12 +96,41 @@ export function ExportDraftMenu({ title, content, frontmatter, size = "sm", comp
       toast.message("内容较长，建议改用「下载 .md」再拖入 Obsidian", { duration: 4000 });
       return;
     }
-    const uri = `obsidian://new?name=${encodeURIComponent(noteName)}&content=${encoded}&silent=true`;
+    // 默认 append=false + silent 不传 = 创建新笔记并切换到它
+    const uri = `obsidian://new?name=${encodeURIComponent(noteName)}&content=${encoded}`;
     try {
       window.location.href = uri;
-      toast.success("已尝试打开 Obsidian。如果没有反应，请确认本机已安装 Obsidian");
+      toast.success("已写入 Obsidian。如果没切到新笔记，请确认本机已安装 Obsidian");
     } catch {
       toast.error("打开 Obsidian 失败");
+    }
+  };
+
+  /** 推送到 WPS 笔记（走后端 MCP） */
+  const handlePushToWps = async () => {
+    setPushingWps(true);
+    try {
+      const res = await apiFetch<{ toolUsed?: string; noteUrl?: string }>("/api/export/wps-note", {
+        method: "POST",
+        body: JSON.stringify({ title, content, frontmatter }),
+      });
+      if (res?.noteUrl) {
+        toast.success("已推送到 WPS 笔记");
+        window.open(res.noteUrl, "_blank", "noopener,noreferrer");
+      } else {
+        toast.success(
+          `已推送到 WPS 笔记${res?.toolUsed ? `（工具：${res.toolUsed}）` : ""}。请在 WPS 笔记里查看`
+        );
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes("WPS_NOTE_MCP_URL") || msg.includes("WPS_NOTE_API_KEY")) {
+        toast.error("WPS 笔记未配置：请在 .env.local 设置 WPS_NOTE_MCP_URL 和 WPS_NOTE_API_KEY");
+      } else {
+        toast.error(`推送失败：${msg.slice(0, 200)}`);
+      }
+    } finally {
+      setPushingWps(false);
     }
   };
 
@@ -138,11 +170,26 @@ export function ExportDraftMenu({ title, content, frontmatter, size = "sm", comp
           <FileText className="w-3.5 h-3.5" />
           <span className={labelClass}>{compact ? "" : "Obsidian"}</span>
         </Button>
+        <Button
+          variant="outline"
+          size={size}
+          onClick={handlePushToWps}
+          disabled={pushingWps}
+          className="gap-0"
+          title="推送到 WPS 笔记（需先配置 .env.local）"
+        >
+          {pushingWps ? (
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          ) : (
+            <NotebookPen className="w-3.5 h-3.5" />
+          )}
+          <span className={labelClass}>{compact ? "" : "WPS 笔记"}</span>
+        </Button>
       </div>
       {!compact && (
         <p className="text-[11px] text-muted-foreground/70 flex items-center gap-1">
           <Info className="w-3 h-3" />
-          飞书云文档 / WPS 笔记：把下载的 .md 文件拖进去即可
+          飞书云文档：把下载的 .md 文件拖进去
         </p>
       )}
     </div>
