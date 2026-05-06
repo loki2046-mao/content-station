@@ -165,6 +165,21 @@ export default function TopicDetailPage({ params }: { params: Promise<{ id: stri
         </Card>
       )}
 
+      {/* 快捷动作：直接带 topicId 跳到下游工具 */}
+      {!editing && (
+        <div className="flex flex-wrap gap-2">
+          <Link href={`/analyze?topicId=${id}`}>
+            <Button variant="outline" size="sm">🔍 生成切口分析</Button>
+          </Link>
+          <Link href={`/titles?topicId=${id}`}>
+            <Button variant="outline" size="sm">✍️ 生成标题</Button>
+          </Link>
+          <Link href={`/outline?topicId=${id}`}>
+            <Button variant="outline" size="sm">🏗️ 生成骨架</Button>
+          </Link>
+        </div>
+      )}
+
       {/* Tab 关联信息 */}
       <Tabs defaultValue="analyses">
         <TabsList>
@@ -179,7 +194,7 @@ export default function TopicDetailPage({ params }: { params: Promise<{ id: stri
               title="暂无切口分析"
               description={
                 <span>
-                  去<Link href={`/analyze`} className="text-primary hover:underline mx-1">切口分析页面</Link>为这个选题生成分析
+                  去<Link href={`/analyze?topicId=${id}`} className="text-primary hover:underline mx-1">切口分析页面</Link>为这个选题生成分析
                 </span>
               }
             />
@@ -251,7 +266,7 @@ export default function TopicDetailPage({ params }: { params: Promise<{ id: stri
               title="暂无标题方案"
               description={
                 <span>
-                  去<Link href={`/titles`} className="text-primary hover:underline mx-1">标题生成页面</Link>为这个选题生成标题
+                  去<Link href={`/titles?topicId=${id}`} className="text-primary hover:underline mx-1">标题生成页面</Link>为这个选题生成标题
                 </span>
               }
             />
@@ -285,7 +300,7 @@ export default function TopicDetailPage({ params }: { params: Promise<{ id: stri
               title="暂无文章骨架"
               description={
                 <span>
-                  去<Link href={`/outline`} className="text-primary hover:underline mx-1">骨架生成页面</Link>为这个选题生成骨架
+                  去<Link href={`/outline?topicId=${id}`} className="text-primary hover:underline mx-1">骨架生成页面</Link>为这个选题生成骨架
                 </span>
               }
             />

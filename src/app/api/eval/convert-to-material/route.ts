@@ -10,6 +10,7 @@ import {
   evalCases,
   evalProjects,
   contentMaterials,
+  materials,
 } from "@/lib/db/schema";
 import { ensureDbInit } from "@/lib/db/ensure-init";
 import { ok, err, dbError, extractJson } from "@/lib/api-helpers";
@@ -157,6 +158,42 @@ export async function POST(request: NextRequest) {
     };
 
     await db.insert(contentMaterials).values(newMaterial);
+
+    // 双写到统一 materials 表（source_origin = "eval"），便于素材库统一展示
+    // metadata 保留来源特有字段，未来 contentMaterials 表可下线
+    try {
+      await db.insert(materials).values({
+        id: uuid(),
+        content:
+          (result.extractableInsight ||
+            result.highlights ||
+            result.issues ||
+            evalCase?.description ||
+            evalCase?.title ||
+            "（无内容）") as string,
+        type: "eval_result",
+        tags: JSON.stringify(["测评", project?.name].filter(Boolean)),
+        topicIds: "[]",
+        sourceType: "eval_result",
+        sourceId: resultId,
+        sourceOrigin: "eval",
+        metadata: JSON.stringify({
+          contentMaterialId: newMaterial.id,
+          testSubject: newMaterial.testSubject,
+          evalGoal: newMaterial.evalGoal,
+          taskDescription: newMaterial.taskDescription,
+          resultSummary: newMaterial.resultSummary,
+          highlights: newMaterial.highlights,
+          issues: newMaterial.issues,
+          titleDirections,
+          articleAngles,
+        }),
+        createdAt: now,
+      });
+    } catch (mirrorError) {
+      // 镜像写入失败不影响主流程，但记录日志
+      console.warn("[convert-to-material] 镜像写入 materials 失败:", mirrorError);
+    }
 
     return ok({ materialId: newMaterial.id, alreadyExists: false, titleDirections, articleAngles });
   } catch (error) {

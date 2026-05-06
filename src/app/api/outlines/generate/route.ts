@@ -11,10 +11,10 @@
 import { NextRequest } from "next/server";
 import { v4 as uuid } from "uuid";
 import { getDb } from "@/lib/db";
-import { outlines } from "@/lib/db/schema";
+import { outlines, topics } from "@/lib/db/schema";
 import { ensureDbInit } from "@/lib/db/ensure-init";
 import { ok, err, dbError, modelError, extractJson } from "@/lib/api-helpers";
-import { eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { getProvider, getCurrentModelName } from "@/lib/providers";
 import { buildOutlinePrompt, OUTLINE_SYSTEM_PROMPT } from "@/lib/prompts/outline";
 
@@ -64,6 +64,17 @@ export async function POST(request: NextRequest) {
         result: JSON.stringify(result),
         status: "done",
       }).where(eq(outlines.id, id));
+
+      // Step 3.5: 推进选题状态机 unprocessed/analyzed → drafted
+      await db
+        .update(topics)
+        .set({ status: "drafted", updatedAt: new Date().toISOString() })
+        .where(
+          and(
+            eq(topics.id, topicId),
+            inArray(topics.status, ["unprocessed", "analyzed"])
+          )
+        );
 
       return ok({ id, status: "done", result });
     } catch (e) {

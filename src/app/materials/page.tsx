@@ -51,6 +51,14 @@ const TYPE_OPTIONS = [
 
 const CREATE_TYPE_OPTIONS = TYPE_OPTIONS.filter((t) => t.value !== "all");
 
+// 素材来源筛选（统一三套素材体系）
+const SOURCE_ORIGIN_OPTIONS = [
+  { value: "all", label: "全部来源" },
+  { value: "creator", label: "✍️ 创作产出" },
+  { value: "external_brain", label: "🧠 外脑沉淀" },
+  { value: "eval", label: "🧪 测评提炼" },
+];
+
 const RATING_LABELS: Record<string, string> = {
   success: "✅ 通过",
   fail: "❌ 失败",
@@ -129,16 +137,62 @@ function Pagination({
 export default function MaterialsPage() {
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
+  const [sourceFilter, setSourceFilter] = useState("all");
   const [page, setPage] = useState(1);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editContent, setEditContent] = useState("");
   const [editType, setEditType] = useState("opinion");
 
+  // 多选 + 素材重组
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [reorganizing, setReorganizing] = useState(false);
+  const [reorganizeOpen, setReorganizeOpen] = useState(false);
+  const [reorganizeResult, setReorganizeResult] = useState<AnyRecord[] | null>(null);
+
+  const toggleSelected = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+  const clearSelection = () => setSelectedIds(new Set());
+
+  const runReorganize = async () => {
+    if (selectedIds.size < 2) {
+      toast.error("请至少选择 2 条素材");
+      return;
+    }
+    if (selectedIds.size > 12) {
+      toast.error("一次最多选 12 条");
+      return;
+    }
+    setReorganizing(true);
+    setReorganizeResult(null);
+    setReorganizeOpen(true);
+    try {
+      const res = await apiFetch<{ suggestions: AnyRecord[] }>("/api/materials/reorganize", {
+        method: "POST",
+        body: JSON.stringify({ materialIds: Array.from(selectedIds) }),
+      });
+      const arr = Array.isArray(res?.suggestions) ? res.suggestions : [];
+      setReorganizeResult(arr);
+      toast.success(`生成了 ${arr.length} 个文章结构方案`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "重组失败");
+      setReorganizeOpen(false);
+    } finally {
+      setReorganizing(false);
+    }
+  };
+
   // 构建查询
   const params = new URLSearchParams();
   if (search) params.set("q", search);
   if (typeFilter && typeFilter !== "all") params.set("type", typeFilter);
+  if (sourceFilter && sourceFilter !== "all") params.set("sourceOrigin", sourceFilter);
   params.set("page", String(page));
   params.set("pageSize", String(PAGE_SIZE));
   const queryStr = params.toString();
@@ -162,6 +216,12 @@ export default function MaterialsPage() {
   // 切换类型筛选时重置到第1页
   const handleTypeChange = (v: string | null) => {
     setTypeFilter(v || "all");
+    setPage(1);
+  };
+
+  // 切换来源筛选时重置到第1页
+  const handleSourceChange = (v: string | null) => {
+    setSourceFilter(v || "all");
     setPage(1);
   };
 
@@ -297,6 +357,16 @@ export default function MaterialsPage() {
               onChange={(e) => handleSearchChange(e.target.value)}
               className="sm:max-w-xs"
             />
+            <Select value={sourceFilter} onValueChange={handleSourceChange}>
+              <SelectTrigger className="sm:w-44">
+                <SelectValue placeholder="来源筛选" />
+              </SelectTrigger>
+              <SelectContent>
+                {SOURCE_ORIGIN_OPTIONS.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Select value={typeFilter} onValueChange={handleTypeChange}>
               <SelectTrigger className="sm:w-40">
                 <SelectValue placeholder="类型筛选" />
@@ -308,6 +378,28 @@ export default function MaterialsPage() {
               </SelectContent>
             </Select>
           </div>
+
+          {/* 批量操作栏：选中素材时显示 */}
+          {selectedIds.size > 0 && (
+            <div className="sticky top-2 z-20 flex items-center gap-3 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2">
+              <span className="text-sm font-medium">已选 {selectedIds.size} 条</span>
+              <Button
+                size="sm"
+                variant="default"
+                disabled={reorganizing || selectedIds.size < 2}
+                onClick={runReorganize}
+                className="bg-primary hover:bg-primary/90"
+              >
+                {reorganizing ? "AI 思考中..." : "🪄 生成文章结构"}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={clearSelection}>
+                清除选择
+              </Button>
+              <span className="ml-auto text-xs text-muted-foreground">
+                选 2-12 条，AI 会给出 2-3 个候选文章方案
+              </span>
+            </div>
+          )}
 
           {/* 素材列表 */}
           {loading ? (
@@ -354,6 +446,13 @@ export default function MaterialsPage() {
                       ) : (
                         // 展示模式
                         <div className="flex items-start gap-3">
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.has(material.id)}
+                            onChange={() => toggleSelected(material.id)}
+                            className="mt-1 h-4 w-4 shrink-0 cursor-pointer accent-primary"
+                            aria-label="选中此素材用于重组"
+                          />
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 mb-2">
                               <MaterialTypeBadge type={material.type} />
@@ -508,6 +607,81 @@ export default function MaterialsPage() {
           )}
         </TabsContent>
       </Tabs>
+
+      {/* 素材重组结果 Dialog */}
+      <Dialog open={reorganizeOpen} onOpenChange={(o) => { setReorganizeOpen(o); if (!o) setReorganizeResult(null); }}>
+        <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>🪄 文章结构候选方案 · 基于 {selectedIds.size} 条素材</DialogTitle>
+          </DialogHeader>
+          {reorganizing ? (
+            <div className="py-12 text-center space-y-2">
+              <div className="text-3xl animate-pulse">🧠</div>
+              <p className="text-sm text-muted-foreground">AI 正在编织你选中的素材...</p>
+            </div>
+          ) : !reorganizeResult?.length ? (
+            <div className="py-8 text-center text-sm text-muted-foreground">
+              暂无可用方案
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {reorganizeResult.map((s, i) => {
+                const feasColor =
+                  s.feasibility === "high"
+                    ? "bg-green-500/15 text-green-500 border-green-500/30"
+                    : s.feasibility === "low"
+                    ? "bg-red-500/15 text-red-500 border-red-500/30"
+                    : "bg-amber-500/15 text-amber-500 border-amber-500/30";
+                return (
+                  <Card key={i} className="border-primary/20">
+                    <CardContent className="pt-4 pb-4 space-y-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="space-y-1 flex-1 min-w-0">
+                          <p className="text-sm font-semibold">方案 {i + 1}：{s.theme}</p>
+                          {s.angle && (
+                            <p className="text-xs text-muted-foreground">切入：{s.angle}</p>
+                          )}
+                        </div>
+                        {s.feasibility && (
+                          <Badge variant="outline" className={`shrink-0 text-xs ${feasColor}`}>
+                            {s.feasibility === "high" ? "高可行" : s.feasibility === "low" ? "可行性低" : "中等"}
+                          </Badge>
+                        )}
+                      </div>
+                      {s.structure && (
+                        <p className="text-sm bg-muted/40 rounded px-2 py-1.5">{s.structure}</p>
+                      )}
+                      {Array.isArray(s.materialUsage) && s.materialUsage.length > 0 && (
+                        <div className="space-y-1">
+                          <p className="text-xs font-medium text-muted-foreground">素材用法</p>
+                          {s.materialUsage.map((u: AnyRecord, j: number) => (
+                            <p key={j} className="text-xs">
+                              <span className="text-primary mr-1">素材{u.materialIndex}:</span>
+                              {u.usage}
+                            </p>
+                          ))}
+                        </div>
+                      )}
+                      {s.reason && (
+                        <p className="text-xs text-muted-foreground italic">{s.reason}</p>
+                      )}
+                    </CardContent>
+                  </Card>
+                );
+              })}
+              <div className="text-center pt-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => { setReorganizeOpen(false); clearSelection(); }}
+                >
+                  关闭并清空选择
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

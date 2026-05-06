@@ -72,16 +72,30 @@ export const outlines = sqliteTable("outlines", {
 });
 
 // ============ 素材库 ============
+// source_origin: 标识素材来源大类，用于"统一素材库"三表合并：
+//   - creator       = 用户在创作链路（标题/骨架/分析/手动新建/导入）产生的素材
+//   - external_brain = 外脑（inbox → promote）沉淀下来的素材
+//   - eval          = 测评工作台输出的素材
+// metadata: 存储与 source_origin 相关的特有字段（如外脑的 ei_type，测评的 evalGoal/testSubject 等）
 export const materials = sqliteTable("materials", {
   id: text("id").primaryKey(),
   content: text("content").notNull(),
   type: text("type", {
-    enum: ["opinion", "quote", "title_inspiration", "example", "opening", "closing", "title", "angle", "outline", "general", "prompt"],
+    enum: [
+      "opinion", "quote", "title_inspiration", "example", "opening", "closing",
+      "title", "angle", "outline", "general", "prompt",
+      // 外脑沉淀类型（保留原始语义，便于跨模块筛选）
+      "ei_opinion", "ei_title", "ei_topic", "ei_product_obs", "ei_quote",
+      // 测评沉淀类型
+      "eval_result", "eval_insight",
+    ],
   }).notNull(),
   tags: text("tags").default("[]"), // JSON 数组
   topicIds: text("topic_ids").default("[]"), // JSON：关联选题ID列表
   sourceType: text("source_type").default(""), // 来源类型: title/angle/outline/manual
   sourceId: text("source_id").default(""), // 来源记录ID
+  sourceOrigin: text("source_origin").default("creator"), // creator | external_brain | eval
+  metadata: text("metadata").default("{}"), // JSON：来源特有字段（ei_type / evalGoal / testSubject ...）
   createdAt: text("created_at")
     .notNull()
     .default(sql`(datetime('now'))`),

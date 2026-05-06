@@ -12,22 +12,49 @@ import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
 import { Separator } from "@/components/ui/separator";
 
-/** 导航项定义 */
-const NAV_ITEMS = [
-  { href: "/", label: "Dashboard", icon: "📊" },
-  { href: "/topics", label: "选题池", icon: "📋" },
-  { href: "/pipeline", label: "Pipeline", icon: "🗂️" },
-  { href: "/hotspots", label: "热点", icon: "🔥" },
-  { href: "/topics-board", label: "推演板", icon: "🧩" },
-  { href: "/analyze", label: "切口分析", icon: "🔍" },
-  { href: "/titles", label: "标题生成", icon: "✍️" },
-  { href: "/outline", label: "骨架生成", icon: "🏗️" },
-  { href: "/materials", label: "素材库", icon: "📝" },
-  { href: "/import", label: "导入", icon: "📥" },
-  { href: "/eval", label: "测评工作台", icon: "🧪" },
-  { href: "/brain", label: "外脑", icon: "🧠" },
-  { href: "/settings", label: "设置", icon: "⚙️" },
+/** 导航分组定义 */
+type NavItem = { href: string; label: string; icon: string };
+type NavGroup = { label: string | null; items: NavItem[] };
+
+const NAV_GROUPS: NavGroup[] = [
+  {
+    label: null,
+    items: [{ href: "/", label: "Dashboard", icon: "📊" }],
+  },
+  {
+    label: "内容生产",
+    items: [
+      { href: "/topics", label: "选题池", icon: "📋" },
+      { href: "/pipeline", label: "Pipeline", icon: "🗂️" },
+      { href: "/topics-board", label: "推演板", icon: "🧩" },
+    ],
+  },
+  {
+    label: "工具箱",
+    items: [
+      { href: "/analyze", label: "切口分析", icon: "🔍" },
+      { href: "/titles", label: "标题生成", icon: "✍️" },
+      { href: "/outline", label: "骨架生成", icon: "🏗️" },
+      { href: "/eval", label: "测评工作台", icon: "🧪" },
+    ],
+  },
+  {
+    label: "知识库",
+    items: [
+      { href: "/materials", label: "素材库", icon: "📝" },
+      { href: "/brain", label: "外脑", icon: "🧠" },
+      { href: "/hotspots", label: "热点", icon: "🔥" },
+      { href: "/import", label: "导入", icon: "📥" },
+    ],
+  },
+  {
+    label: null,
+    items: [{ href: "/settings", label: "设置", icon: "⚙️" }],
+  },
 ];
+
+// 扁平列表用于路径匹配（兼容外脑的多个子路由）
+const NAV_ITEMS = NAV_GROUPS.flatMap((g) => g.items);
 
 /** 导航链接 */
 function NavLink({
@@ -101,23 +128,32 @@ function SidebarContent({ onItemClick }: { onItemClick?: () => void }) {
       <Separator className="mx-4 w-auto" />
 
       {/* 导航 */}
-      <nav className="flex-1 p-3 space-y-1">
-        {NAV_ITEMS.map((item) => (
-          <NavLink
-            key={item.href}
-            item={item}
-            isActive={
-              item.href === "/"
-                ? pathname === "/"
-                : item.href === "/brain"
-                ? pathname.startsWith("/brain") ||
-                  ["/quick", "/inbox", "/organize", "/library", "/search"].some(
-                    (p) => pathname === p || pathname.startsWith(p + "/")
-                  )
-                : pathname.startsWith(item.href)
-            }
-            onClick={onItemClick}
-          />
+      <nav className="flex-1 p-3 space-y-3 overflow-y-auto">
+        {NAV_GROUPS.map((group, gi) => (
+          <div key={gi} className="space-y-1">
+            {group.label && (
+              <p className="px-3 pt-1 text-[10px] uppercase tracking-wider text-muted-foreground/70 font-semibold">
+                {group.label}
+              </p>
+            )}
+            {group.items.map((item) => (
+              <NavLink
+                key={item.href}
+                item={item}
+                isActive={
+                  item.href === "/"
+                    ? pathname === "/"
+                    : item.href === "/brain"
+                    ? pathname.startsWith("/brain") ||
+                      ["/quick", "/inbox", "/organize", "/library", "/search"].some(
+                        (p) => pathname === p || pathname.startsWith(p + "/")
+                      )
+                    : pathname.startsWith(item.href)
+                }
+                onClick={onItemClick}
+              />
+            ))}
+          </div>
         ))}
       </nav>
 

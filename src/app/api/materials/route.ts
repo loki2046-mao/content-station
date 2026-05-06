@@ -22,13 +22,20 @@ export async function GET(request: NextRequest) {
     const type = searchParams.get("type");
     const q = searchParams.get("q");
     const tag = searchParams.get("tag");
+    const sourceOrigin = searchParams.get("sourceOrigin"); // creator | external_brain | eval
     const page = Math.max(1, parseInt(searchParams.get("page") || "1"));
     const pageSize = Math.max(1, parseInt(searchParams.get("pageSize") || "10"));
     // legacy support: if explicit limit is passed, use it (no pagination)
     const limitParam = searchParams.get("limit");
 
     const conditions = [];
-    if (type) conditions.push(eq(materials.type, type as "opinion" | "quote" | "title_inspiration" | "example" | "opening" | "closing" | "title" | "angle" | "outline" | "general" | "prompt"));
+    if (type) conditions.push(eq(materials.type, type as
+      "opinion" | "quote" | "title_inspiration" | "example" | "opening" | "closing"
+      | "title" | "angle" | "outline" | "general" | "prompt"
+      | "ei_opinion" | "ei_title" | "ei_topic" | "ei_product_obs" | "ei_quote"
+      | "eval_result" | "eval_insight"
+    ));
+    if (sourceOrigin) conditions.push(eq(materials.sourceOrigin, sourceOrigin));
     if (q) conditions.push(like(materials.content, `%${q}%`));
 
     // Count total (before tag filter which is app-level)

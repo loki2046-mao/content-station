@@ -14,7 +14,7 @@ import { getDb } from "@/lib/db";
 import { analyses, topics } from "@/lib/db/schema";
 import { ensureDbInit } from "@/lib/db/ensure-init";
 import { ok, err, dbError, modelError, extractJson } from "@/lib/api-helpers";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { getProvider, getCurrentModelName } from "@/lib/providers";
 import { buildAnalyzePrompt, ANALYZE_SYSTEM_PROMPT } from "@/lib/prompts/analyze";
 
@@ -66,15 +66,12 @@ export async function POST(request: NextRequest) {
         status: "done",
       }).where(eq(analyses.id, id));
 
-      // 自动更新关联选题状态为 "analyzed"
+      // 自动推进选题状态：unprocessed → analyzed（已经是 drafted/published 不降级）
       if (topicId) {
-        const rows = await db.select().from(topics).where(eq(topics.id, topicId));
-        if (rows.length > 0 && rows[0].status === "unprocessed") {
-          await db.update(topics).set({
-            status: "analyzed",
-            updatedAt: new Date().toISOString(),
-          }).where(eq(topics.id, topicId));
-        }
+        await db
+          .update(topics)
+          .set({ status: "analyzed", updatedAt: new Date().toISOString() })
+          .where(and(eq(topics.id, topicId), eq(topics.status, "unprocessed")));
       }
 
       return ok({ id, status: "done", result });

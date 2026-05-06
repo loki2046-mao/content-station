@@ -120,7 +120,7 @@ export default function HotspotsPage() {
   const [sourceFilter, setSourceFilter] = useState("all");
   const [statusTab, setStatusTab] = useState("all");
   const [fetching, setFetching] = useState(false);
-  const [sortByRelevance, setSortByRelevance] = useState(false);
+  const [sortMode, setSortMode] = useState<"time" | "relevance" | "heat">("time");
 
   // 构建查询 URL
   const params = new URLSearchParams();
@@ -202,9 +202,13 @@ export default function HotspotsPage() {
     [refresh]
   );
 
-  // 相关度排序
-  const sortedHotspots = sortByRelevance && hotspotsList
-    ? [...hotspotsList].sort((a, b) => calcRelevanceScore(b) - calcRelevanceScore(a))
+  // 排序
+  const sortedHotspots = hotspotsList
+    ? [...hotspotsList].sort((a, b) => {
+        if (sortMode === "relevance") return calcRelevanceScore(b) - calcRelevanceScore(a);
+        if (sortMode === "heat") return ((b.heatScore ?? b.heat_score ?? 0) - (a.heatScore ?? a.heat_score ?? 0));
+        return 0; // time: 保持接口返回顺序（已按时间倒序）
+      })
     : hotspotsList;
 
   // 统计
@@ -230,13 +234,21 @@ export default function HotspotsPage() {
                 上次抓取：{new Date(lastFetchedAt).toLocaleString("zh-CN")}
               </span>
             )}
-            <Button
-              variant={sortByRelevance ? "default" : "outline"}
-              className="text-xs h-9"
-              onClick={() => setSortByRelevance((v) => !v)}
-            >
-              {sortByRelevance ? "✦ 相关优先" : "按时间"}
-            </Button>
+            <div className="flex rounded-md border border-border overflow-hidden">
+              {(["time", "relevance", "heat"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  onClick={() => setSortMode(mode)}
+                  className={`text-xs px-3 h-9 transition-colors ${
+                    sortMode === mode
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                  }`}
+                >
+                  {mode === "time" ? "最新" : mode === "relevance" ? "✦相关" : "🔥热度"}
+                </button>
+              ))}
+            </div>
             <Button
               onClick={handleFetch}
               disabled={fetching}

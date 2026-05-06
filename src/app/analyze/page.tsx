@@ -6,6 +6,8 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
+import { useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { useApiGet, apiFetch } from "@/hooks/use-api";
 import { useBackgroundTask } from "@/hooks/use-background-task";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -34,15 +36,29 @@ const SUITABILITY_COLORS: Record<string, string> = {
 };
 
 export default function AnalyzePage() {
+  const searchParams = useSearchParams();
+  const queryTopicId = searchParams.get("topicId");
   const [topicId, setTopicId] = useState("");
   const [inputText, setInputText] = useState("");
   const [currentResult, setCurrentResult] = useState<AnyRecord[] | null>(null);
   const [currentAnalysisId, setCurrentAnalysisId] = useState<string | null>(null);
   const [savingAngles, setSavingAngles] = useState<Set<number>>(new Set());
+  const [prefilled, setPrefilled] = useState(false);
 
   const { data: topicsList } = useApiGet<AnyRecord[]>("/api/topics");
   const { data: historyList, refresh: refreshHistory } = useApiGet<AnyRecord[]>("/api/analyses");
   const { data: settingsData } = useApiGet<AnyRecord>("/api/settings");
+
+  // 从 URL ?topicId= 自动预填（仅一次）
+  useEffect(() => {
+    if (prefilled || !queryTopicId || !topicsList) return;
+    const topic = topicsList.find((t) => t.id === queryTopicId);
+    if (topic) {
+      setTopicId(topic.id);
+      setInputText(topic.title + (topic.summary ? `\n${topic.summary}` : ""));
+      setPrefilled(true);
+    }
+  }, [queryTopicId, topicsList, prefilled]);
 
   const modelConfigured = !!settingsData?.settings?.api_key;
 
@@ -201,19 +217,44 @@ export default function AnalyzePage() {
                       ))}
                     </ul>
                   )}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="text-xs mt-2"
-                    disabled={savingAngles.has(i)}
-                    onClick={() => handleSaveToMaterial(angle, i)}
-                  >
-                    {savingAngles.has(i) ? "保存中..." : "💾 保存到素材库"}
-                  </Button>
+                  <div className="flex flex-wrap gap-1 mt-2 pt-2 border-t border-border/50">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-xs h-7"
+                      disabled={savingAngles.has(i)}
+                      onClick={() => handleSaveToMaterial(angle, i)}
+                    >
+                      {savingAngles.has(i) ? "保存中..." : "💾 存素材"}
+                    </Button>
+                    {topicId && topicId !== "_direct" && currentAnalysisId && (
+                      <>
+                        <Link
+                          href={`/titles?topicId=${topicId}&analysisId=${currentAnalysisId}&angleIndex=${i}`}
+                        >
+                          <Button variant="ghost" size="sm" className="text-xs h-7">
+                            ✍️ 生成标题
+                          </Button>
+                        </Link>
+                        <Link
+                          href={`/outline?topicId=${topicId}&analysisId=${currentAnalysisId}&angleIndex=${i}`}
+                        >
+                          <Button variant="ghost" size="sm" className="text-xs h-7">
+                            🏗️ 生成骨架
+                          </Button>
+                        </Link>
+                      </>
+                    )}
+                  </div>
                 </CardContent>
               </Card>
             ))}
           </div>
+          {(!topicId || topicId === "_direct") && (
+            <p className="text-xs text-muted-foreground mt-2">
+              💡 关联一个选题后，每个切口下方会出现"生成标题/骨架"快捷按钮
+            </p>
+          )}
         </div>
       )}
 

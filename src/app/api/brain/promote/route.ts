@@ -7,7 +7,7 @@
 import { NextRequest } from "next/server";
 import { v4 as uuid } from "uuid";
 import { getDb } from "@/lib/db";
-import { inboxItems, contentItems } from "@/lib/db/schema";
+import { inboxItems, contentItems, materials } from "@/lib/db/schema";
 import { ensureDbInit } from "@/lib/db/ensure-init";
 import { ok, err, dbError } from "@/lib/api-helpers";
 import { eq } from "drizzle-orm";
@@ -50,6 +50,42 @@ export async function POST(request: NextRequest) {
     };
 
     await db.insert(contentItems).values(newContentItem);
+
+    // 双写到统一 materials 表（source_origin = "external_brain"），便于素材库统一展示
+    // 保留 ei_ 前缀类型，metadata 记录原始 contentItem 关联，便于未来下线 content_items
+    try {
+      // ei_* 类型已扩展进 materials.type 枚举，可直接使用
+      const allowedEiTypes = new Set([
+        "ei_opinion",
+        "ei_title",
+        "ei_topic",
+        "ei_product_obs",
+        "ei_quote",
+      ]);
+      const mirrorType = allowedEiTypes.has(itemType) ? itemType : "ei_opinion";
+
+      await db.insert(materials).values({
+        id: uuid(),
+        content: inbox.rawContent,
+        type: mirrorType,
+        tags: JSON.stringify(tags || []),
+        topicIds: "[]",
+        sourceType: "external_brain",
+        sourceId: newContentItem.id,
+        sourceOrigin: "external_brain",
+        metadata: JSON.stringify({
+          contentItemId: newContentItem.id,
+          inboxId,
+          eiType: itemType,
+          title: title || "",
+          relatedTopic: relatedTopic || "",
+          relatedProduct: relatedProduct || "",
+        }),
+        createdAt: now,
+      });
+    } catch (mirrorError) {
+      console.warn("[brain/promote] 镜像写入 materials 失败:", mirrorError);
+    }
 
     // 更新 inbox_item：设置 promoted_to_id 和 status='archived'
     await db.update(inboxItems)

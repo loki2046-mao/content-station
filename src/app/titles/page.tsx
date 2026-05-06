@@ -5,7 +5,8 @@
  */
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import { useApiGet, apiFetch } from "@/hooks/use-api";
 import { useBackgroundTask } from "@/hooks/use-background-task";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -38,6 +39,11 @@ const STYLE_COLORS: Record<string, string> = {
 };
 
 export default function TitlesPage() {
+  const searchParams = useSearchParams();
+  const queryTopicId = searchParams.get("topicId");
+  const queryAnalysisId = searchParams.get("analysisId");
+  const queryAngleIndex = searchParams.get("angleIndex");
+
   const [topicId, setTopicId] = useState("");
   const [selectedAnalysisId, setSelectedAnalysisId] = useState("");
   const [selectedAngleIndex, setSelectedAngleIndex] = useState("");
@@ -47,6 +53,7 @@ export default function TitlesPage() {
   const [currentRecordId, setCurrentRecordId] = useState<string | null>(null);
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
   const [savingKeys, setSavingKeys] = useState<Set<string>>(new Set());
+  const [prefilled, setPrefilled] = useState(false);
 
   const { data: topicsList } = useApiGet<AnyRecord[]>("/api/topics");
   const { data: historyList, refresh: refreshHistory } = useApiGet<AnyRecord[]>("/api/titles");
@@ -54,6 +61,38 @@ export default function TitlesPage() {
   const { data: topicAnalyses } = useApiGet<AnyRecord[]>(
     topicId ? `/api/analyses?topicId=${topicId}` : null
   );
+
+  // URL 预填：?topicId=xx&analysisId=yy&angleIndex=2
+  useEffect(() => {
+    if (prefilled || !queryTopicId || !topicsList) return;
+    const topic = topicsList.find((t) => t.id === queryTopicId);
+    if (topic) {
+      setTopicId(topic.id);
+      setPrefilled(true); // 标记 topic 已预填，下面 analysis 的 effect 接力
+    }
+  }, [queryTopicId, topicsList, prefilled]);
+
+  // 等 topicAnalyses 加载好后，再预填 analysisId 和 angleIndex
+  useEffect(() => {
+    if (!prefilled || !queryAnalysisId || !topicAnalyses) return;
+    if (selectedAnalysisId) return; // 已经设过了
+    const analysis = topicAnalyses.find((a) => a.id === queryAnalysisId);
+    if (!analysis) return;
+    setSelectedAnalysisId(queryAnalysisId);
+    if (queryAngleIndex !== null) {
+      try {
+        const result = typeof analysis.result === "string" ? JSON.parse(analysis.result) : analysis.result;
+        const idx = parseInt(queryAngleIndex);
+        const a = Array.isArray(result) ? result[idx] : null;
+        if (a) {
+          setSelectedAngleIndex(queryAngleIndex);
+          setAngle(`${a.name}：${a.description}`);
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }, [prefilled, queryAnalysisId, queryAngleIndex, topicAnalyses, selectedAnalysisId]);
 
   const modelConfigured = !!settingsData?.settings?.api_key;
   const selectedTopic = topicsList?.find((t) => t.id === topicId);

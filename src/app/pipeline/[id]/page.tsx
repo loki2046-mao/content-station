@@ -16,7 +16,15 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { SkeletonCard } from "@/components/loading";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { SkeletonCard, EmptyState } from "@/components/loading";
+import { ExportDraftMenu } from "@/components/export-draft-menu";
 import { toast } from "sonner";
 import {
   ChevronDown,
@@ -575,36 +583,30 @@ function SkeletonOutput({
 
 /** draft 阶段输出：初稿展示+编辑 */
 function DraftOutput({
+  articleTitle,
   output,
   editedDraft,
   onEdit,
 }: {
+  articleTitle: string;
   output: AnyRecord;
   editedDraft: string;
   onEdit: (v: string) => void;
 }) {
   const content: string = output?.content || "";
   const wordCount: number = output?.wordCount || content.length;
+  // 优先使用用户编辑后的版本（不为空时）做导出
+  const exportContent = editedDraft.trim() || content;
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <p className="text-xs font-medium text-muted-foreground">初稿内容</p>
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-muted-foreground">{wordCount} 字</span>
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-6 px-2 text-xs gap-1"
-            onClick={() => {
-              navigator.clipboard.writeText(content);
-              toast.success("已复制全文");
-            }}
-          >
-            <Copy className="w-3 h-3" />
-            一键复制
-          </Button>
-        </div>
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <p className="text-xs font-medium text-muted-foreground">初稿内容 · {wordCount} 字</p>
+        <ExportDraftMenu
+          title={articleTitle}
+          content={exportContent}
+          frontmatter={{ source: "content-station", stage: "draft", wordCount }}
+        />
       </div>
       <div className="rounded-lg border border-border bg-muted/10 p-5">
         <div className="text-sm text-foreground/90 leading-8 whitespace-pre-wrap font-sans">
@@ -626,7 +628,7 @@ function DraftOutput({
 }
 
 /** layout 阶段输出：排版指引 */
-function LayoutOutput({ output }: { output: AnyRecord }) {
+function LayoutOutput({ articleTitle, output }: { articleTitle: string; output: AnyRecord }) {
   const content: string = output?.content || "";
   const wordCount: number = output?.wordCount || content.length;
   const layoutUrl: string = output?.layoutUrl || "https://wechat-layout.hiloki.ai";
@@ -647,20 +649,13 @@ function LayoutOutput({ output }: { output: AnyRecord }) {
           <ExternalLink className="w-3.5 h-3.5" />
         </a>
       </div>
-      <div className="flex items-center justify-between">
-        <p className="text-xs font-medium text-muted-foreground">初稿内容（约 {wordCount} 字）</p>
-        <Button
-          size="sm"
-          variant="ghost"
-          className="h-6 px-2 text-xs gap-1"
-          onClick={() => {
-            navigator.clipboard.writeText(content);
-            toast.success("已复制全文，可直接粘贴到排版编辑器");
-          }}
-        >
-          <Copy className="w-3 h-3" />
-          一键复制
-        </Button>
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <p className="text-xs font-medium text-muted-foreground">初稿内容 · {wordCount} 字</p>
+        <ExportDraftMenu
+          title={articleTitle}
+          content={content}
+          frontmatter={{ source: "content-station", stage: "layout", wordCount }}
+        />
       </div>
       <div className="rounded-lg border border-border bg-muted/10 p-4 max-h-60 overflow-y-auto">
         <pre className="text-xs text-foreground/80 whitespace-pre-wrap font-sans leading-relaxed">
@@ -831,6 +826,139 @@ function StageProgressBar({
 }
 
 // ─────────────────────────────────────────────
+// Import-from-Toolbox Dialog
+// 让 Pipeline 的 skeleton / cover 阶段可以一键导入"工具箱"已有记录
+// 避免跟独立页面 /outline /titles 重复造轮子
+// ─────────────────────────────────────────────
+function ImportFromToolboxDialog({
+  articleId,
+  topicId,
+  stage,
+  onImported,
+}: {
+  articleId: string;
+  topicId: string | null | undefined;
+  stage: "skeleton" | "cover";
+  onImported: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [importing, setImporting] = useState<string | null>(null);
+
+  const sourceUrl = stage === "skeleton"
+    ? (topicId ? `/api/outlines?topicId=${topicId}` : `/api/outlines`)
+    : (topicId ? `/api/titles?topicId=${topicId}` : `/api/titles`);
+
+  const { data: records, loading } = useApiGet<AnyRecord[]>(open ? sourceUrl : null);
+
+  const handleImport = async (sourceId: string) => {
+    setImporting(sourceId);
+    try {
+      await apiFetch(`/api/articles/${articleId}/steps/${stage}/import`, {
+        method: "POST",
+        body: JSON.stringify({
+          sourceType: stage === "skeleton" ? "outline" : "title",
+          sourceId,
+        }),
+      });
+      toast.success(stage === "skeleton" ? "骨架已导入" : "标题已导入");
+      setOpen(false);
+      onImported();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "导入失败");
+    } finally {
+      setImporting(null);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger
+        render={
+          <Button variant="outline" size="sm" className="gap-1.5">
+            <ExternalLink className="w-3.5 h-3.5" />
+            从工具箱导入{stage === "skeleton" ? "骨架" : "标题"}
+          </Button>
+        }
+      />
+      <DialogContent className="max-w-2xl max-h-[70vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>
+            {stage === "skeleton" ? "选择一个已有的骨架记录" : "选择一个已有的标题方案"}
+          </DialogTitle>
+        </DialogHeader>
+        {loading ? (
+          <div className="space-y-2">
+            {[1, 2, 3].map((i) => <SkeletonCard key={i} />)}
+          </div>
+        ) : !records?.length ? (
+          <EmptyState
+            icon={stage === "skeleton" ? "🏗️" : "✍️"}
+            title={`暂无可导入的${stage === "skeleton" ? "骨架" : "标题"}记录`}
+            description={
+              <span>
+                可以先去
+                <a
+                  href={stage === "skeleton" ? "/outline" : "/titles"}
+                  className="text-primary hover:underline mx-1"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  {stage === "skeleton" ? "骨架生成" : "标题生成"}
+                </a>
+                生成一份
+              </span>
+            }
+          />
+        ) : (
+          <div className="space-y-2">
+            {records.map((r) => {
+              const isImporting = importing === r.id;
+              const result = typeof r.result === "string" ? safeJson(r.result) : r.result;
+              const preview = stage === "skeleton"
+                ? (() => {
+                    const sections = (result as AnyRecord)?.sections || [];
+                    const tension = (result as AnyRecord)?.coreTension || "";
+                    return tension
+                      ? `核心矛盾：${tension} · 共 ${Array.isArray(sections) ? sections.length : 0} 个章节`
+                      : `共 ${Array.isArray(sections) ? sections.length : 0} 个章节`;
+                  })()
+                : Array.isArray(result)
+                  ? `共 ${result.length} 套标题方案：${(result as AnyRecord[]).slice(0, 2).map((t) => t.mainTitle).filter(Boolean).join(" / ")}`
+                  : "—";
+
+              return (
+                <div
+                  key={r.id}
+                  className="rounded-lg border border-border p-3 hover:border-primary/40 transition-colors"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-foreground/90">{preview}</p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {new Date(r.createdAt || r.created_at).toLocaleString("zh-CN")} ·
+                        {" "}{r.modelUsed || r.model_used || "未知模型"}
+                      </p>
+                    </div>
+                    <Button
+                      size="sm"
+                      disabled={!!importing}
+                      onClick={() => handleImport(r.id)}
+                      className="shrink-0"
+                    >
+                      {isImporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "导入"}
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─────────────────────────────────────────────
 // Current Stage Panel
 // ─────────────────────────────────────────────
 function CurrentStagePanel({
@@ -979,12 +1107,20 @@ function CurrentStagePanel({
   return (
     <Card>
       <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between flex-wrap gap-2">
           <CardTitle className="text-base flex items-center gap-2">
             <span>{stageInfo?.icon}</span>
             当前阶段：{stageInfo?.label}
           </CardTitle>
           <div className="flex items-center gap-2">
+            {(currentStage === "skeleton" || currentStage === "cover") && !isRunning && (
+              <ImportFromToolboxDialog
+                articleId={article.id}
+                topicId={article.topicId || article.topic_id}
+                stage={currentStage as "skeleton" | "cover"}
+                onImported={onRefresh}
+              />
+            )}
             <Badge
               variant="outline"
               className={`text-xs flex items-center gap-1 border ${stepConfig.color}`}
@@ -1052,13 +1188,14 @@ function CurrentStagePanel({
             )}
             {currentStage === "draft" && (
               <DraftOutput
+                articleTitle={article.title}
                 output={outputData}
                 editedDraft={editedDraft}
                 onEdit={setEditedDraft}
               />
             )}
             {currentStage === "layout" && (
-              <LayoutOutput output={outputData} />
+              <LayoutOutput articleTitle={article.title} output={outputData} />
             )}
             {currentStage === "cover" && (
               <CoverOutput
@@ -1136,7 +1273,7 @@ function CurrentStagePanel({
 // ─────────────────────────────────────────────
 // Stage History Panel
 // ─────────────────────────────────────────────
-function StepHistoryPanel({ steps }: { steps: AnyRecord[] }) {
+function StepHistoryPanel({ steps, articleTitle }: { steps: AnyRecord[]; articleTitle: string }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const toggle = (stageKey: string) => {
@@ -1209,7 +1346,17 @@ function StepHistoryPanel({ steps }: { steps: AnyRecord[] }) {
                   )}
                   {outputData && (
                     <div>
-                      <p className="text-xs text-muted-foreground mb-1 font-medium">阶段输出</p>
+                      <div className="flex items-center justify-between flex-wrap gap-2 mb-1">
+                        <p className="text-xs text-muted-foreground font-medium">阶段输出</p>
+                        {(stage.key === "draft" || stage.key === "layout") && (outputData as AnyRecord)?.content && (
+                          <ExportDraftMenu
+                            title={articleTitle}
+                            content={(outputData as AnyRecord).content as string}
+                            frontmatter={{ source: "content-station", stage: stage.key }}
+                            compact
+                          />
+                        )}
+                      </div>
                       <HistoryOutput stage={stage.key} outputData={outputData} />
                     </div>
                   )}
@@ -1595,7 +1742,7 @@ export default function PipelineDetailPage({ params }: { params: Promise<{ id: s
       />
 
       {/* 历史阶段折叠 */}
-      <StepHistoryPanel steps={steps} />
+      <StepHistoryPanel steps={steps} articleTitle={article.title} />
     </div>
   );
 }

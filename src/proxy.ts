@@ -19,7 +19,7 @@ function isValidToken(token: string): boolean {
   return token === makeToken(PASSWORD);
 }
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // 放行：登录页本身、登录 API

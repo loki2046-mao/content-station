@@ -352,6 +352,9 @@ export async function initDb() {
     try { await client.execute("ALTER TABLE titles ADD COLUMN error TEXT DEFAULT ''"); } catch { /* 已存在则忽略 */ }
     // outlines 表加 error
     try { await client.execute("ALTER TABLE outlines ADD COLUMN error TEXT DEFAULT ''"); } catch { /* 已存在则忽略 */ }
+    // materials 表加 source_origin / metadata（统一三套素材体系的基础字段）
+    try { await client.execute("ALTER TABLE materials ADD COLUMN source_origin TEXT DEFAULT 'creator'"); } catch { /* 已存在则忽略 */ }
+    try { await client.execute("ALTER TABLE materials ADD COLUMN metadata TEXT DEFAULT '{}'"); } catch { /* 已存在则忽略 */ }
 
     // 插入默认标签（如果不存在）
     const defaultTags = [

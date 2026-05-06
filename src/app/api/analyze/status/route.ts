@@ -6,7 +6,7 @@ import { NextRequest } from "next/server";
 import { getDb } from "@/lib/db";
 import { analyses } from "@/lib/db/schema";
 import { ensureDbInit } from "@/lib/db/ensure-init";
-import { ok, err, dbError } from "@/lib/api-helpers";
+import { ok, err, dbError, isBackgroundTaskTimedOut } from "@/lib/api-helpers";
 import { eq } from "drizzle-orm";
 
 export async function GET(request: NextRequest) {
@@ -22,7 +22,17 @@ export async function GET(request: NextRequest) {
     const rows = await db.select().from(analyses).where(eq(analyses.id, id));
     if (rows.length === 0) return err("记录不存在", 404);
 
-    const record = rows[0];
+    let record = rows[0];
+
+    // 超时降级：generating 超过阈值视为僵尸任务，自动改 error
+    if (record.status === "generating" && isBackgroundTaskTimedOut(record.createdAt)) {
+      const timeoutMsg = "任务超时（生成进程可能已中断），请重新发起";
+      await db.update(analyses)
+        .set({ status: "error", error: timeoutMsg })
+        .where(eq(analyses.id, id));
+      record = { ...record, status: "error", error: timeoutMsg };
+    }
+
     return ok({
       id: record.id,
       status: record.status || "done",

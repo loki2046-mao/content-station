@@ -5,7 +5,8 @@
  */
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import { useApiGet, apiFetch } from "@/hooks/use-api";
 import { useBackgroundTask } from "@/hooks/use-background-task";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -29,6 +30,11 @@ import { toast } from "sonner";
 type AnyRecord = Record<string, any>;
 
 export default function OutlinePage() {
+  const searchParams = useSearchParams();
+  const queryTopicId = searchParams.get("topicId");
+  const queryAnalysisId = searchParams.get("analysisId");
+  const queryAngleIndex = searchParams.get("angleIndex");
+
   const [topicId, setTopicId] = useState("");
   const [selectedAnalysisId, setSelectedAnalysisId] = useState("");
   const [selectedAngleIndex, setSelectedAngleIndex] = useState("");
@@ -38,6 +44,7 @@ export default function OutlinePage() {
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState("");
   const [savingKeys, setSavingKeys] = useState<Set<string>>(new Set());
+  const [prefilled, setPrefilled] = useState(false);
 
   const { data: topicsList } = useApiGet<AnyRecord[]>("/api/topics");
   const { data: historyList, refresh: refreshHistory } = useApiGet<AnyRecord[]>("/api/outlines");
@@ -45,6 +52,37 @@ export default function OutlinePage() {
   const { data: topicAnalyses } = useApiGet<AnyRecord[]>(
     topicId ? `/api/analyses?topicId=${topicId}` : null
   );
+
+  // URL 预填：?topicId=xx&analysisId=yy&angleIndex=2
+  useEffect(() => {
+    if (prefilled || !queryTopicId || !topicsList) return;
+    const topic = topicsList.find((t) => t.id === queryTopicId);
+    if (topic) {
+      setTopicId(topic.id);
+      setPrefilled(true);
+    }
+  }, [queryTopicId, topicsList, prefilled]);
+
+  useEffect(() => {
+    if (!prefilled || !queryAnalysisId || !topicAnalyses) return;
+    if (selectedAnalysisId) return;
+    const analysis = topicAnalyses.find((a) => a.id === queryAnalysisId);
+    if (!analysis) return;
+    setSelectedAnalysisId(queryAnalysisId);
+    if (queryAngleIndex !== null) {
+      try {
+        const result = typeof analysis.result === "string" ? JSON.parse(analysis.result) : analysis.result;
+        const idx = parseInt(queryAngleIndex);
+        const a = Array.isArray(result) ? result[idx] : null;
+        if (a) {
+          setSelectedAngleIndex(queryAngleIndex);
+          setAngle(`${a.name}：${a.description}`);
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }, [prefilled, queryAnalysisId, queryAngleIndex, topicAnalyses, selectedAnalysisId]);
 
   const modelConfigured = !!settingsData?.settings?.api_key;
   const selectedTopic = topicsList?.find((t) => t.id === topicId);

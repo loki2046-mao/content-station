@@ -37,6 +37,24 @@ export function safeParseJson<T>(str: string | null | undefined, fallback: T): T
 }
 
 /**
+ * 后台任务超时阈值（毫秒）
+ * 超过此时长仍处于 generating 的任务视为僵尸任务，应自动标记为 error
+ */
+export const BACKGROUND_TASK_TIMEOUT_MS = 10 * 60 * 1000; // 10 分钟
+
+/**
+ * 判断 generating 状态的任务是否已经超时（成为僵尸任务）
+ * 用于 status 查询时主动降级 — Vercel/serverless 进程重启会让任务卡死，
+ * 这里给前端一个明确的失败信号而不是无限轮询
+ */
+export function isBackgroundTaskTimedOut(createdAt: string | null | undefined): boolean {
+  if (!createdAt) return false;
+  const ts = Date.parse(createdAt);
+  if (Number.isNaN(ts)) return false;
+  return Date.now() - ts > BACKGROUND_TASK_TIMEOUT_MS;
+}
+
+/**
  * 从模型返回的文本中提取 JSON
  * 模型可能在 JSON 前后加入说明文字，需要提取 ```json ... ``` 中的内容
  */
