@@ -7,6 +7,9 @@
  * - 公共热榜抓取器保留为可选能力，但不再默认混入 Hacker News 等泛技术源
  */
 import { COLA_TOPIC_SOURCES, TopicSourceConfig } from "@/lib/hotspots/sources";
+import { getDb } from "@/lib/db";
+import { settings } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 
 /** 热点条目统一格式 */
 export interface HotspotEntry {
@@ -155,7 +158,65 @@ async function fetchNewsRss(url: string): Promise<string> {
   return res.text();
 }
 
+async function getSerperKey(): Promise<string> {
+  try {
+    const db = getDb();
+    if (!db) return "";
+    const row = await db.select().from(settings).where(eq(settings.key, "serper_api_key"));
+    return row[0]?.value?.replace(/^"|"$/g, "") || "";
+  } catch {
+    return "";
+  }
+}
+
+async function fetchViaSerper(source: TopicSourceConfig, apiKey: string): Promise<HotspotEntry[]> {
+  const res = await fetch("https://google.serper.dev/news", {
+    method: "POST",
+    headers: {
+      "X-API-KEY": apiKey,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      q: source.searchQuery,
+      num: DEFAULT_ITEMS_PER_TOPIC_SOURCE,
+      gl: "cn",
+      hl: "zh-cn",
+    }),
+  });
+  if (!res.ok) throw new Error(`Serper ${res.status}`);
+  const data = await res.json();
+  const news = data.news || [];
+
+  return news
+    .map((item: { title?: string; link?: string; snippet?: string; source?: string; date?: string }, index: number) => {
+      const title = (item.title || "").trim();
+      if (!title || isSpamTitle(title)) return null;
+      return {
+        title,
+        url: item.link || "",
+        heatScore: topicPriorityScore(source.priority) - index,
+        summary: item.snippet || "",
+        author: item.source || "",
+        source: source.name,
+        tags: [source.name, source.type, source.priority],
+      } as HotspotEntry;
+    })
+    .filter((item: HotspotEntry | null): item is HotspotEntry => Boolean(item));
+}
+
 async function fetchTopicSourceNews(source: TopicSourceConfig): Promise<HotspotEntry[]> {
+  // 优先走 Serper News API
+  const serperKey = await getSerperKey();
+  if (serperKey) {
+    try {
+      const items = await fetchViaSerper(source, serperKey);
+      if (items.length > 0) return items;
+    } catch (error) {
+      console.error(`[Hotspot] Serper「${source.name}」失败:`, error);
+    }
+  }
+
+  // Fallback: RSS
   const rssUrls = [buildGoogleNewsRssUrl(source), buildBingNewsRssUrl(source)];
   let lastError: unknown = null;
 
