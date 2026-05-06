@@ -92,16 +92,35 @@ function cleanNewsTitle(title: string, publisher: string): string {
   return title.endsWith(suffix) ? title.slice(0, -suffix.length).trim() : title;
 }
 
+// 垃圾标题过滤：过滤博彩、广告、乱码等
+const SPAM_PATTERNS = [
+  /Results for ["\s]*=/i,         // Results for "=...
+  /官网[：:]/,                      // 官网：xxx.tw
+  /TG[：:]/i,                       // TG: 电报联系
+  /\.tw｝/,                         // .tw｝ 博彩域名
+  /\.(byc|jcz|lof|rjf|bcz)"\s*-/,  // 乱码后缀
+  /Bastion X/i,                     // 具体垃圾词
+  /整合市場/,
+  /高效決策/,
+  /投資行為/,
+  /博彩|賭博|彩票|老虎機/,
+];
+
+function isSpamTitle(title: string): boolean {
+  return SPAM_PATTERNS.some((pattern) => pattern.test(title));
+}
+
 function parseNewsRss(xml: string, source: TopicSourceConfig): HotspotEntry[] {
   const itemBlocks = xml.match(/<item\b[\s\S]*?<\/item>/gi) || [];
 
   return itemBlocks
-    .slice(0, DEFAULT_ITEMS_PER_TOPIC_SOURCE)
+    .slice(0, DEFAULT_ITEMS_PER_TOPIC_SOURCE * 3) // 多取一些，过滤后保留足够数量
     .map((block, index) => {
       const publisher = getXmlTagText(block, "source");
       const rawTitle = getXmlTagText(block, "title");
       const title = cleanNewsTitle(rawTitle, publisher);
       if (!title) return null;
+      if (isSpamTitle(title)) return null; // 过滤垃圾
 
       const pubDate = getXmlTagText(block, "pubDate");
       const summary = getXmlTagText(block, "description");
@@ -119,7 +138,8 @@ function parseNewsRss(xml: string, source: TopicSourceConfig): HotspotEntry[] {
         fetchedAt: pubDate,
       } as HotspotEntry & { fetchedAt?: string };
     })
-    .filter((item): item is HotspotEntry => Boolean(item));
+    .filter((item): item is HotspotEntry => Boolean(item))
+    .slice(0, DEFAULT_ITEMS_PER_TOPIC_SOURCE);
 }
 
 async function fetchNewsRss(url: string): Promise<string> {
