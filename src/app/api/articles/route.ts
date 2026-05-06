@@ -47,18 +47,22 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { title, topicId, metadata } = body;
+    const { title, topicId, metadata, startStage, prefilled } = body;
 
     if (!title?.trim()) return err("文章标题不能为空");
 
     const now = new Date().toISOString();
     const articleId = crypto.randomUUID();
 
+    // 如果从推演板过来，直接跳到指定阶段
+    const startIdx = startStage ? ALL_STAGES.indexOf(startStage as Stage) : 0;
+    const actualStartStage = startIdx >= 0 ? ALL_STAGES[startIdx] : "topic";
+
     const newArticle = {
       id: articleId,
       title: title.trim(),
       topicId: topicId || null,
-      currentStage: "topic" as const,
+      currentStage: actualStartStage,
       status: "active" as const,
       metadata: JSON.stringify(metadata || {}),
       createdAt: now,
@@ -68,20 +72,39 @@ export async function POST(request: NextRequest) {
     await db.insert(articles).values(newArticle);
 
     // 自动创建全部7个stage的step记录
-    // topic step 设为 running（前端收到响应后立即发起LLM调用）
-    const steps = ALL_STAGES.map((stage, index) => ({
-      id: crypto.randomUUID(),
-      articleId,
-      stage,
-      status: index === 0 ? ("running" as const) : ("pending" as const),
-      input: "{}",
-      output: "{}",
-      decision: null,
-      error: "",
-      startedAt: index === 0 ? now : null,
-      completedAt: null,
-      createdAt: now,
-    }));
+    // startStage之前的步骤自动标记completed，并填入prefilled数据
+    const prefilledData = prefilled || {};
+    const steps = ALL_STAGES.map((stage, index) => {
+      let status: "completed" | "running" | "pending" = "pending";
+      let output = "{}";
+      let completedAt: string | null = null;
+      let startedAt: string | null = null;
+
+      if (index < startIdx) {
+        // 前面的阶段自动completed
+        status = "completed";
+        output = JSON.stringify(prefilledData[stage] || { note: "从推演板导入，已完成" });
+        completedAt = now;
+        startedAt = now;
+      } else if (index === startIdx) {
+        status = "running";
+        startedAt = now;
+      }
+
+      return {
+        id: crypto.randomUUID(),
+        articleId,
+        stage,
+        status,
+        input: "{}",
+        output,
+        decision: null,
+        error: "",
+        startedAt,
+        completedAt,
+        createdAt: now,
+      };
+    });
 
     for (const step of steps) {
       await db.insert(articleSteps).values(step);

@@ -391,17 +391,39 @@ function SummaryPanel({
     try {
       // 先保存结论
       await onSave();
-      // 创建文章，标题带入推演板的题目
+
+      // 从推演板卡片中汇集已有信息
+      const preferredCards = cards.filter((c) => (c.cardStatus || c.card_status) === "preferred");
+      const angleCards = cards.filter((c) => (c.zoneType || c.zone_type) === "angle");
+      const spreadCards = cards.filter((c) => (c.zoneType || c.zone_type) === "spread");
+
+      // 构建 prefilled 数据，topic和material阶段的内容
+      const prefilled = {
+        topic: {
+          title: projectTitle,
+          angle: summary.recommendedAngle || "",
+          platform: summary.recommendedPlatform || "",
+          spreadPoint: summary.spreadSummary || "",
+          angles: angleCards.map((c: AnyRecord) => c.title).filter(Boolean),
+        },
+        material: {
+          note: "从推演板导入",
+          spreadPoints: spreadCards.map((c: AnyRecord) => ({ title: c.title, content: c.content })),
+          preferredCards: preferredCards.map((c: AnyRecord) => ({ zone: c.zoneType || c.zone_type, title: c.title, content: c.content })),
+        },
+      };
+
+      // 创建文章，直接从 skeleton 开始
       const article = await apiFetch<AnyRecord>("/api/articles", {
         method: "POST",
         body: JSON.stringify({
           title: projectTitle,
           topicId: projectId,
-          angle: summary.recommendedAngle || "",
-          platform: summary.recommendedPlatform || "",
+          startStage: "skeleton",
+          prefilled,
         }),
       });
-      toast.success("已创建文章，进入Pipeline");
+      toast.success("已创建文章，直接进入骨架阶段");
       router.push(`/pipeline/${article.id}`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "创建失败");
