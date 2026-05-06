@@ -5,7 +5,7 @@
  */
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { useApiGet, apiFetch } from "@/hooks/use-api";
 import { useBackgroundTask } from "@/hooks/use-background-task";
@@ -39,6 +39,14 @@ const STYLE_COLORS: Record<string, string> = {
 };
 
 export default function TitlesPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-center text-muted-foreground">加载中...</div>}>
+      <TitlesPageContent />
+    </Suspense>
+  );
+}
+
+function TitlesPageContent() {
   const searchParams = useSearchParams();
   const queryTopicId = searchParams.get("topicId");
   const queryAnalysisId = searchParams.get("analysisId");

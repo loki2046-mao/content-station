@@ -7,7 +7,7 @@
  */
 "use client";
 
-import { useState, useCallback, useEffect, use, useRef } from "react";
+import { useState, useCallback, useEffect, use, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useApiGet, apiFetch } from "@/hooks/use-api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -1467,6 +1467,14 @@ function AutoAdvancePanel({
 // Main Page
 // ─────────────────────────────────────────────
 export default function PipelineDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  return (
+    <Suspense fallback={<div className="p-8 text-center text-muted-foreground">加载中...</div>}>
+      <PipelineDetailContent params={params} />
+    </Suspense>
+  );
+}
+
+function PipelineDetailContent({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
   const searchParams = useSearchParams();

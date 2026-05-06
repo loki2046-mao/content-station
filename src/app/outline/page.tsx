@@ -5,7 +5,7 @@
  */
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { useApiGet, apiFetch } from "@/hooks/use-api";
 import { useBackgroundTask } from "@/hooks/use-background-task";
@@ -30,6 +30,14 @@ import { toast } from "sonner";
 type AnyRecord = Record<string, any>;
 
 export default function OutlinePage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-center text-muted-foreground">加载中...</div>}>
+      <OutlineContent />
+    </Suspense>
+  );
+}
+
+function OutlineContent() {
   const searchParams = useSearchParams();
   const queryTopicId = searchParams.get("topicId");
   const queryAnalysisId = searchParams.get("analysisId");

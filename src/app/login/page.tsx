@@ -86,7 +86,7 @@ function LoginForm() {
 
 export default function LoginPage() {
   return (
-    <Suspense>
+    <Suspense fallback={<div className="p-8 text-center text-muted-foreground">加载中...</div>}>
       <LoginForm />
     </Suspense>
   );
