@@ -229,9 +229,16 @@ export async function runStageExecution(articleId: string, stage: Stage) {
       let angle = topicStep?.decision || "";
       if (!angle) {
         const topicOutput = safeJson<{
-          angles: Array<{ name: string; description: string }>;
+          angles?: Array<{ name: string; description: string }>;
+          angle?: string;
+          title?: string;
+          platform?: string;
+          spreadPoint?: string;
         }>(topicStep?.output);
-        if (topicOutput?.angles?.length) {
+        // 优先读推演板填入的结构
+        if (topicOutput?.angle) {
+          angle = topicOutput.angle;
+        } else if (topicOutput?.angles?.length) {
           const first = topicOutput.angles[0];
           angle = `${first.name}：${first.description}`;
         }
@@ -239,14 +246,36 @@ export async function runStageExecution(articleId: string, stage: Stage) {
 
       let materialSummary = materialStep?.decision || "";
       if (!materialSummary) {
-        const matOutput = safeJson<{ summary: string }>(materialStep?.output);
-        materialSummary = matOutput?.summary || "";
+        const matOutput = safeJson<{
+          summary?: string;
+          note?: string;
+          spreadPoints?: Array<{ title: string; content: string }>;
+          preferredCards?: Array<{ zone: string; title: string; content: string }>;
+        }>(materialStep?.output);
+        // 优先读推演板填入的素材
+        if (matOutput?.preferredCards?.length) {
+          materialSummary = matOutput.preferredCards
+            .map((c) => `【${c.zone}】${c.title}：${c.content || ""}`)
+            .join("\n");
+        } else if (matOutput?.spreadPoints?.length) {
+          materialSummary = matOutput.spreadPoints
+            .map((s) => `${s.title}：${s.content || ""}`)
+            .join("\n");
+        } else {
+          materialSummary = matOutput?.summary || matOutput?.note || "";
+        }
       }
+
+      // 补充上下文：平台和传播点
+      const topicOutputExtra = safeJson<{ platform?: string; spreadPoint?: string }>(topicStep?.output);
+      const platformHint = topicOutputExtra?.platform ? `目标平台：${topicOutputExtra.platform}` : "";
+      const spreadHint = topicOutputExtra?.spreadPoint ? `核心传播点：${topicOutputExtra.spreadPoint}` : "";
+      const extraContext = [platformHint, spreadHint].filter(Boolean).join("\n");
 
       const prompt = buildSkeletonPrompt({
         title: articleTitle,
         angle: angle || articleTitle,
-        materialSummary,
+        materialSummary: [extraContext, materialSummary].filter(Boolean).join("\n\n"),
       });
       const raw = await provider.generate(prompt, {
         systemPrompt: PIPELINE_SYSTEM_PROMPT,
