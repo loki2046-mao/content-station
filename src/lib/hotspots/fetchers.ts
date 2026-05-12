@@ -24,7 +24,7 @@ export interface HotspotEntry {
 
 type AnyRecord = Record<string, unknown>;
 
-const DEFAULT_ITEMS_PER_TOPIC_SOURCE = 5;
+const DEFAULT_ITEMS_PER_TOPIC_SOURCE = 3;
 
 function asArray<T = AnyRecord>(value: unknown): T[] {
   return Array.isArray(value) ? (value as T[]) : [];
@@ -181,6 +181,7 @@ async function fetchViaSerper(source: TopicSourceConfig, apiKey: string): Promis
       num: DEFAULT_ITEMS_PER_TOPIC_SOURCE,
       gl: "cn",
       hl: "zh-cn",
+      tbs: "qdr:d3",
     }),
   });
   if (!res.ok) throw new Error(`Serper ${res.status}`);

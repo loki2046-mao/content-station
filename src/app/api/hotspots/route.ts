@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
     const source = searchParams.get("source");
     const status = searchParams.get("status");
     const q = searchParams.get("q");
-    const limit = parseInt(searchParams.get("limit") || "100");
+    const limit = parseInt(searchParams.get("limit") || "30");
     const days = parseInt(searchParams.get("days") || "7");
 
     const conditions = [];
